@@ -8,7 +8,7 @@ defmodule RChatWeb.UserLive.RegistrationTest do
     test "renders registration page", %{conn: conn} do
       {:ok, _lv, html} = live(conn, ~p"/users/register")
 
-      assert html =~ "Register"
+      assert html =~ "Create an account"
       assert html =~ "Log in"
     end
 
@@ -28,26 +28,27 @@ defmodule RChatWeb.UserLive.RegistrationTest do
       result =
         lv
         |> element("#registration_form")
-        |> render_change(user: %{"email" => "with spaces"})
+        |> render_change(user: %{"email" => "with spaces", "password" => "short"})
 
-      assert result =~ "Register"
+      assert result =~ "Create an account"
       assert result =~ "must have the @ sign and no spaces"
+      assert result =~ "should be at least 12 character(s)"
     end
   end
 
   describe "register user" do
-    test "creates account but does not log in", %{conn: conn} do
+    test "creates account and triggers the log in form", %{conn: conn} do
       {:ok, lv, _html} = live(conn, ~p"/users/register")
 
-      email = unique_user_email()
-      form = form(lv, "#registration_form", user: valid_user_attributes(email: email))
+      attrs = valid_user_attributes()
+      form = form(lv, "#registration_form", user: attrs)
+      render_submit(form)
 
-      {:ok, _lv, html} =
-        render_submit(form)
-        |> follow_redirect(conn, ~p"/users/log-in")
+      conn = follow_trigger_action(form, conn)
+      assert redirected_to(conn) == ~p"/"
+      assert get_session(conn, :user_token)
 
-      assert html =~
-               ~r/An email was sent to .*, please access it to confirm your account/
+      assert RChat.Accounts.get_user_by_email(attrs.email)
     end
 
     test "renders errors for duplicated email", %{conn: conn} do
@@ -58,7 +59,22 @@ defmodule RChatWeb.UserLive.RegistrationTest do
       result =
         lv
         |> form("#registration_form",
-          user: %{"email" => user.email}
+          user: valid_user_attributes(email: user.email)
+        )
+        |> render_submit()
+
+      assert result =~ "has already been taken"
+    end
+
+    test "renders errors for duplicated username", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/users/register")
+
+      user = user_fixture()
+
+      result =
+        lv
+        |> form("#registration_form",
+          user: valid_user_attributes(username: user.username)
         )
         |> render_submit()
 
