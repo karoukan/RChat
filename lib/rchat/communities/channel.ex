@@ -22,6 +22,6 @@ defmodule RChat.Communities.Channel do
     |> validate_length(:name, min: 2, max: 50)
     |> validate_length(:topic, max: 1000)
     |> validate_number(:position, greater_than_or_equal_to: 0)
-    |> unique_constraint([:community_id, :name])
+    |> unique_constraint(:name, name: :channels_community_id_name_index)
   end
 end

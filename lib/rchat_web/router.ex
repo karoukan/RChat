@@ -17,12 +17,6 @@ defmodule RChatWeb.Router do
     plug :accepts, ["json"]
   end
 
-  scope "/", RChatWeb do
-    pipe_through :browser
-
-    get "/", PageController, :home
-  end
-
   # Other scopes may use custom stacks.
   # scope "/api", RChatWeb do
   #   pipe_through :api
@@ -51,6 +45,12 @@ defmodule RChatWeb.Router do
 
     live_session :require_authenticated_user,
       on_mount: [{RChatWeb.UserAuth, :require_authenticated}] do
+      live "/", ChatLive, :index
+      live "/communities/new", ChatLive, :new_community
+      live "/c/:slug", ChatLive, :community
+      live "/c/:slug/channels/new", ChatLive, :new_channel
+      live "/c/:slug/:channel_id", ChatLive, :community
+
       live "/users/settings", UserLive.Settings, :edit
     end
 

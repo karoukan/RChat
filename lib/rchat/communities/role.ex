@@ -22,6 +22,6 @@ defmodule RChat.Communities.Role do
     |> validate_format(:color, ~r/^#[0-9a-f]{6}$/i, message: "must be a hex color like #5a3b8c")
     |> validate_number(:permissions, greater_than_or_equal_to: 0)
     |> validate_number(:position, greater_than_or_equal_to: 0)
-    |> unique_constraint([:community_id, :name])
+    |> unique_constraint(:name, name: :roles_community_id_name_index)
   end
 end
