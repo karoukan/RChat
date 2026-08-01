@@ -2,7 +2,7 @@ defmodule RChat.CommunitiesTest do
   use RChat.DataCase
 
   alias RChat.Communities
-  alias RChat.Communities.{Community, Membership, Role}
+  alias RChat.Communities.{Membership, Role}
 
   import RChat.AccountsFixtures
   import RChat.CommunitiesFixtures

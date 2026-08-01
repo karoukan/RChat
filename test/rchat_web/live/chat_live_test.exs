@@ -101,6 +101,55 @@ defmodule RChatWeb.ChatLiveTest do
       assert render(lv) =~ "random"
     end
 
+    test "shows the empty channel state", %{conn: conn, community: community} do
+      {:ok, _lv, html} = live(conn, ~p"/c/#{community.slug}")
+
+      assert html =~ "This is the beginning of"
+    end
+
+    test "sends a message", %{conn: conn, community: community} do
+      {:ok, lv, _html} = live(conn, ~p"/c/#{community.slug}")
+
+      lv
+      |> form("#composer", %{"content" => "hello from the owner"})
+      |> render_submit()
+
+      assert render(lv) =~ "hello from the owner"
+      assert [message] = RChat.Chat.list_messages(hd(Communities.list_channels(community)))
+      assert message.content == "hello from the owner"
+    end
+
+    test "receives messages from other members in realtime", %{conn: conn, community: community} do
+      member = user_fixture()
+      join_community(member, community)
+      member_scope = RChat.Accounts.Scope.for_user(member)
+      [channel] = Communities.list_channels(community)
+
+      {:ok, lv, _html} = live(conn, ~p"/c/#{community.slug}")
+
+      RChat.ChatFixtures.message_fixture(member_scope, community, channel, %{
+        content: "hi from elsewhere"
+      })
+
+      html = render(lv)
+      assert html =~ "hi from elsewhere"
+      assert html =~ member.username
+    end
+
+    test "does not render messages from other channels", %{conn: conn, community: community} do
+      other_scope = user_scope_fixture()
+      other = community_fixture(other_scope, %{name: "Elsewhere"})
+      [other_channel] = Communities.list_channels(other)
+
+      {:ok, lv, _html} = live(conn, ~p"/c/#{community.slug}")
+
+      RChat.ChatFixtures.message_fixture(other_scope, other, other_channel, %{
+        content: "private stuff"
+      })
+
+      refute render(lv) =~ "private stuff"
+    end
+
     test "plain members do not get the channel creation action", %{community: community} do
       member = user_fixture()
       join_community(member, community)
