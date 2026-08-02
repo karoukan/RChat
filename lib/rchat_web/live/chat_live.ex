@@ -1,6 +1,7 @@
 defmodule RChatWeb.ChatLive do
   use RChatWeb, :live_view
 
+  alias RChat.Chat
   alias RChat.Communities
   alias RChat.Communities.{Channel, Community}
 
@@ -147,22 +148,78 @@ defmodule RChatWeb.ChatLive do
                 {@current_channel.topic}
               </span>
             </div>
-            <div class="flex-1 overflow-y-auto grid place-items-center">
-              <div class="text-center text-sm text-muted space-y-1">
-                <p class="font-medium text-base-content">
-                  <span class="opacity-60">#</span>{@current_channel.name}
-                </p>
-                <p>This is the beginning of the channel.</p>
+            <div
+              id="messages"
+              phx-update="stream"
+              phx-hook=".AutoScroll"
+              class="flex-1 overflow-y-auto px-4 py-4"
+            >
+              <div id="messages-empty" class="hidden only:block pt-2 text-sm text-muted">
+                This is the beginning of <span class="font-medium">#{@current_channel.name}</span>.
+              </div>
+              <div
+                :for={{dom_id, item} <- @streams.messages}
+                id={dom_id}
+                class={["group", if(item.compact, do: "mt-px", else: "mt-4 first:mt-0")]}
+              >
+                <div :if={item.compact} class="flex gap-3">
+                  <div class="w-9 shrink-0 text-right text-[10px] leading-6 text-muted opacity-0 group-hover:opacity-100">
+                    {format_time(item.message.inserted_at)}
+                  </div>
+                  <p class="flex-1 min-w-0 text-sm whitespace-pre-wrap break-words">
+                    {item.message.content}
+                  </p>
+                </div>
+                <div :if={!item.compact} class="flex gap-3">
+                  <div class={[
+                    "size-9 shrink-0 rounded-full flex items-center justify-center text-sm font-semibold",
+                    avatar_color(item.message.author)
+                  ]}>
+                    {avatar_initial(item.message.author)}
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-baseline gap-2">
+                      <span class="text-sm font-semibold">{author_name(item.message.author)}</span>
+                      <span class="text-[11px] text-muted">
+                        {format_time(item.message.inserted_at)}
+                      </span>
+                    </div>
+                    <p class="text-sm whitespace-pre-wrap break-words">{item.message.content}</p>
+                  </div>
+                </div>
               </div>
             </div>
-            <div class="shrink-0 p-3">
+            <form id="composer" phx-submit="send_message" phx-hook=".Composer" class="shrink-0 p-3">
               <input
                 type="text"
+                name="content"
                 class="input w-full"
                 placeholder={"Message ##{@current_channel.name}"}
-                disabled
+                autocomplete="off"
+                maxlength="4000"
+                required
               />
-            </div>
+            </form>
+            <script :type={Phoenix.LiveView.ColocatedHook} name=".AutoScroll">
+              export default {
+                mounted() { this.scroll() },
+                beforeUpdate() {
+                  this.follow =
+                    this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight < 120
+                },
+                updated() { if (this.follow) this.scroll() },
+                scroll() { this.el.scrollTop = this.el.scrollHeight }
+              }
+            </script>
+            <script :type={Phoenix.LiveView.ColocatedHook} name=".Composer">
+              export default {
+                mounted() {
+                  this.el.addEventListener("submit", () => {
+                    requestAnimationFrame(() => this.el.reset())
+                  })
+                }
+              }
+            </script>
           <% true -> %>
             <div class="flex-1 grid place-items-center p-6">
               <div class="text-center space-y-3">
@@ -202,15 +259,19 @@ defmodule RChatWeb.ChatLive do
   @impl true
   def mount(_params, _session, socket) do
     {:ok,
-     assign(socket,
+     socket
+     |> assign(
        communities: Communities.list_communities(socket.assigns.current_scope),
        current_community: nil,
        channels: [],
        current_channel: nil,
        members: [],
        can_manage_channels: false,
-       form: nil
-     )}
+       form: nil,
+       subscribed_channel: nil,
+       last_message: nil
+     )
+     |> stream(:messages, [])}
   end
 
   @impl true
@@ -256,14 +317,21 @@ defmodule RChatWeb.ChatLive do
         id -> Communities.get_channel!(community, id)
       end
 
-    assign(socket,
+    messages = if current_channel, do: Chat.list_messages(current_channel), else: []
+    {items, last_message} = group_messages(messages)
+
+    socket
+    |> assign(
       page_title: if(current_channel, do: "##{current_channel.name}", else: community.name),
       current_community: community,
       channels: channels,
       current_channel: current_channel,
       members: Communities.list_members(community),
-      can_manage_channels: Communities.permitted?(scope, community, :manage_channels)
+      can_manage_channels: Communities.permitted?(scope, community, :manage_channels),
+      last_message: last_message
     )
+    |> maybe_subscribe(current_channel)
+    |> stream(:messages, items, reset: true)
   end
 
   defp apply_action(socket, :new_channel, %{"slug" => slug}) do
@@ -325,6 +393,91 @@ defmodule RChatWeb.ChatLive do
         {:noreply, assign(socket, form: to_form(changeset, action: :insert))}
     end
   end
+
+  def handle_event("send_message", %{"content" => content}, socket) do
+    %{current_scope: scope, current_community: community, current_channel: channel} =
+      socket.assigns
+
+    case Chat.create_message(scope, community, channel, %{content: content}) do
+      {:ok, _message} ->
+        {:noreply, socket}
+
+      {:error, :unauthorized} ->
+        {:noreply, put_flash(socket, :error, "You are not allowed to send messages here.")}
+
+      {:error, %Ecto.Changeset{}} ->
+        {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_info({:message_created, message}, socket) do
+    %{current_channel: current_channel, last_message: last_message} = socket.assigns
+
+    if current_channel && message.channel_id == current_channel.id do
+      item = %{id: message.id, message: message, compact: compact?(message, last_message)}
+
+      {:noreply,
+       socket
+       |> stream_insert(:messages, item)
+       |> assign(last_message: message)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  defp maybe_subscribe(socket, channel) do
+    previous = socket.assigns.subscribed_channel
+
+    cond do
+      not connected?(socket) ->
+        socket
+
+      previous && channel && previous.id == channel.id ->
+        socket
+
+      true ->
+        if previous, do: Chat.unsubscribe_channel(previous)
+        if channel, do: Chat.subscribe_channel(channel)
+        assign(socket, subscribed_channel: channel)
+    end
+  end
+
+  defp group_messages(messages) do
+    Enum.map_reduce(messages, nil, fn message, previous ->
+      {%{id: message.id, message: message, compact: compact?(message, previous)}, message}
+    end)
+  end
+
+  defp compact?(_message, nil), do: false
+
+  defp compact?(message, previous) do
+    message.author_id == previous.author_id and
+      DateTime.diff(message.inserted_at, previous.inserted_at, :second) < 300
+  end
+
+  defp format_time(datetime), do: Calendar.strftime(datetime, "%H:%M")
+
+  @avatar_colors [
+    "bg-sky-900 text-sky-200",
+    "bg-teal-900 text-teal-200",
+    "bg-indigo-900 text-indigo-200",
+    "bg-rose-900 text-rose-200",
+    "bg-amber-900 text-amber-200",
+    "bg-emerald-900 text-emerald-200"
+  ]
+
+  defp avatar_color(nil), do: "bg-base-300 text-muted"
+
+  defp avatar_color(user) do
+    Enum.at(@avatar_colors, :erlang.phash2(user.username, length(@avatar_colors)))
+  end
+
+  defp avatar_initial(nil), do: "?"
+  defp avatar_initial(user), do: user.username |> String.first() |> String.upcase()
+
+  defp author_name(nil), do: "deleted user"
+  defp author_name(user), do: user.username
 
   defp initials(name) do
     name
