@@ -11,7 +11,7 @@ defmodule RChat.Communities do
   import Ecto.Query, warn: false
 
   alias RChat.Accounts.Scope
-  alias RChat.Communities.{Channel, Community, Membership, Permissions, Role}
+  alias RChat.Communities.{Channel, Community, Invite, Membership, Permissions, Role}
   alias RChat.Repo
 
   ## Communities
@@ -116,6 +116,100 @@ defmodule RChat.Communities do
 
   def get_membership(%Scope{user: user}, %Community{} = community) do
     Repo.get_by(Membership, user_id: user.id, community_id: community.id)
+  end
+
+  ## Invites
+
+  def create_invite(%Scope{user: user} = scope, %Community{} = community, attrs \\ %{}) do
+    if permitted?(scope, community, :create_invites) do
+      %Invite{community_id: community.id, created_by_id: user.id}
+      |> Invite.changeset(attrs)
+      |> Repo.insert()
+    else
+      {:error, :unauthorized}
+    end
+  end
+
+  def list_active_invites(%Scope{} = scope, %Community{} = community) do
+    if permitted?(scope, community, :create_invites) do
+      now = DateTime.utc_now()
+
+      from(i in Invite,
+        where: i.community_id == ^community.id,
+        where: is_nil(i.expires_at) or i.expires_at > ^now,
+        where: is_nil(i.max_uses) or i.uses < i.max_uses,
+        order_by: [desc: i.id]
+      )
+      |> Repo.all()
+    else
+      []
+    end
+  end
+
+  def get_invite_by_code(code) when is_binary(code) do
+    Invite
+    |> Repo.get_by(code: code)
+    |> Repo.preload(:community)
+  end
+
+  def invite_status(%Invite{} = invite) do
+    cond do
+      invite.expires_at && DateTime.after?(DateTime.utc_now(), invite.expires_at) -> :expired
+      invite.max_uses && invite.uses >= invite.max_uses -> :exhausted
+      true -> :valid
+    end
+  end
+
+  @doc """
+  The single entry point to join a community through an invite code.
+
+  Creates the membership and burns one invite use atomically. Every
+  membership created from an invite goes through here.
+  """
+  def accept_invite(%Scope{user: user}, code) when is_binary(code) do
+    # TODO: reject banned users here once bans land
+    Repo.transact(fn ->
+      case get_invite_by_code(code) do
+        nil ->
+          {:error, :not_found}
+
+        %Invite{} = invite ->
+          cond do
+            invite_status(invite) == :expired ->
+              {:error, :expired}
+
+            Repo.get_by(Membership, user_id: user.id, community_id: invite.community_id) ->
+              {:error, :already_member}
+
+            true ->
+              claim_invite_use(user, invite)
+          end
+      end
+    end)
+  end
+
+  defp claim_invite_use(user, invite) do
+    claimed =
+      from(i in Invite,
+        where: i.id == ^invite.id,
+        where: is_nil(i.max_uses) or i.uses < i.max_uses
+      )
+      |> Repo.update_all(inc: [uses: 1])
+
+    case claimed do
+      {1, _} ->
+        with {:ok, _membership} <- insert_membership(user, invite.community) do
+          {:ok, invite.community}
+        end
+
+      {0, _} ->
+        {:error, :exhausted}
+    end
+  end
+
+  def count_members(%Community{} = community) do
+    from(m in Membership, where: m.community_id == ^community.id)
+    |> Repo.aggregate(:count)
   end
 
   ## Permissions
