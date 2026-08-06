@@ -52,9 +52,9 @@ defmodule RChatWeb.UserLive.RegistrationTest do
     end
 
     test "renders errors for duplicated email", %{conn: conn} do
-      {:ok, lv, _html} = live(conn, ~p"/users/register")
+      %{user: user, invite: invite} = existing_user_with_invite()
 
-      user = user_fixture(%{email: "test@email.com"})
+      {:ok, lv, _html} = live(conn, ~p"/users/register?invite=#{invite.code}")
 
       result =
         lv
@@ -67,9 +67,9 @@ defmodule RChatWeb.UserLive.RegistrationTest do
     end
 
     test "renders errors for duplicated username", %{conn: conn} do
-      {:ok, lv, _html} = live(conn, ~p"/users/register")
+      %{user: user, invite: invite} = existing_user_with_invite()
 
-      user = user_fixture()
+      {:ok, lv, _html} = live(conn, ~p"/users/register?invite=#{invite.code}")
 
       result =
         lv
@@ -80,6 +80,57 @@ defmodule RChatWeb.UserLive.RegistrationTest do
 
       assert result =~ "has already been taken"
     end
+  end
+
+  describe "invite gating" do
+    test "the first account can register without an invite", %{conn: conn} do
+      {:ok, _lv, html} = live(conn, ~p"/users/register")
+
+      assert html =~ "first account of this server"
+      assert html =~ "registration_form"
+    end
+
+    test "registration is closed without an invite once users exist", %{conn: conn} do
+      user_fixture()
+
+      {:ok, _lv, html} = live(conn, ~p"/users/register")
+
+      assert html =~ "Invite only"
+      refute html =~ "registration_form"
+    end
+
+    test "registration is closed with an invalid invite code", %{conn: conn} do
+      user_fixture()
+
+      {:ok, _lv, html} = live(conn, ~p"/users/register?invite=nope")
+
+      assert html =~ "Invite only"
+    end
+
+    test "a valid invite opens registration and joins the community", %{conn: conn} do
+      %{invite: invite, community: community} = existing_user_with_invite()
+
+      {:ok, lv, html} = live(conn, ~p"/users/register?invite=#{invite.code}")
+      assert html =~ community.name
+
+      attrs = valid_user_attributes()
+
+      lv
+      |> form("#registration_form", user: attrs)
+      |> render_submit()
+
+      user = RChat.Accounts.get_user_by_email(attrs.email)
+      scope = RChat.Accounts.Scope.for_user(user)
+      assert RChat.Communities.get_membership(scope, community)
+    end
+  end
+
+  defp existing_user_with_invite do
+    scope = user_scope_fixture()
+    community = RChat.CommunitiesFixtures.community_fixture(scope)
+    {:ok, invite} = RChat.Communities.create_invite(scope, community)
+
+    %{user: scope.user, community: community, invite: invite}
   end
 
   describe "registration navigation" do

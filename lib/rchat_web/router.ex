@@ -49,6 +49,7 @@ defmodule RChatWeb.Router do
       live "/communities/new", ChatLive, :new_community
       live "/c/:slug", ChatLive, :community
       live "/c/:slug/channels/new", ChatLive, :new_channel
+      live "/c/:slug/invite", ChatLive, :invite
       live "/c/:slug/:channel_id", ChatLive, :community
 
       live "/users/settings", UserLive.Settings, :edit
@@ -64,6 +65,7 @@ defmodule RChatWeb.Router do
       on_mount: [{RChatWeb.UserAuth, :mount_current_scope}] do
       live "/users/register", UserLive.Registration, :new
       live "/users/log-in", UserLive.Login, :new
+      live "/join/:code", JoinLive, :show
     end
 
     post "/users/log-in", UserSessionController, :create

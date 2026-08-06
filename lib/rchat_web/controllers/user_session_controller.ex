@@ -17,6 +17,7 @@ defmodule RChatWeb.UserSessionController do
 
     if user = Accounts.get_user_by_email_and_password(email, password) do
       conn
+      |> store_return_to(user_params["return_to"])
       |> put_flash(:info, info)
       |> UserAuth.log_in_user(user, user_params)
     else
@@ -27,6 +28,16 @@ defmodule RChatWeb.UserSessionController do
       |> redirect(to: ~p"/users/log-in")
     end
   end
+
+  defp store_return_to(conn, "/" <> _ = path) do
+    if String.starts_with?(path, "//") do
+      conn
+    else
+      put_session(conn, :user_return_to, path)
+    end
+  end
+
+  defp store_return_to(conn, _), do: conn
 
   def update_password(conn, %{"user" => user_params} = params) do
     user = conn.assigns.current_scope.user
