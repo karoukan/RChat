@@ -32,6 +32,8 @@ docker run -d --name rchat \
 
 L'application écoute sur le port 4000. La base SQLite vit dans le volume `rchat_data`, les migrations s'exécutent automatiquement au démarrage.
 
+Le premier compte se crée librement sur `/users/register` : faites-le juste après l'installation, c'est vous. Ensuite, l'inscription n'est possible qu'avec un lien d'invitation généré depuis une communauté (bouton « Invite people »).
+
 `SECRET_KEY_BASE` signe les sessions : elle se génère une fois et se conserve. La régénérer déconnecte tous les utilisateurs. Ne la passez jamais en clair sur la ligne de commande.
 
 Variables reconnues :
