@@ -53,6 +53,32 @@ defmodule RChatWeb.UserSessionControllerTest do
       assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "Welcome back!"
     end
 
+    test "redirects to a safe return_to path", %{conn: conn, user: user} do
+      conn =
+        post(conn, ~p"/users/log-in", %{
+          "user" => %{
+            "email" => user.email,
+            "password" => valid_user_password(),
+            "return_to" => "/join/somecode"
+          }
+        })
+
+      assert redirected_to(conn) == "/join/somecode"
+    end
+
+    test "ignores unsafe return_to values", %{conn: conn, user: user} do
+      conn =
+        post(conn, ~p"/users/log-in", %{
+          "user" => %{
+            "email" => user.email,
+            "password" => valid_user_password(),
+            "return_to" => "//evil.example.com"
+          }
+        })
+
+      assert redirected_to(conn) == ~p"/"
+    end
+
     test "shows a dedicated flash after registration", %{conn: conn, user: user} do
       conn =
         post(conn, ~p"/users/log-in?_action=registered", %{

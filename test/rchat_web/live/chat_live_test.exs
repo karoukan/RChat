@@ -101,6 +101,12 @@ defmodule RChatWeb.ChatLiveTest do
       assert render(lv) =~ "random"
     end
 
+    test "shows the current user as online", %{conn: conn, community: community} do
+      {:ok, _lv, html} = live(conn, ~p"/c/#{community.slug}")
+
+      assert html =~ "bg-success"
+    end
+
     test "shows the empty channel state", %{conn: conn, community: community} do
       {:ok, _lv, html} = live(conn, ~p"/c/#{community.slug}")
 

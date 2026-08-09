@@ -62,6 +62,13 @@ defmodule RChatWeb.ChatLive do
             >
               <.icon name="hero-plus" class="size-4" /> New channel
             </.link>
+            <.link
+              :if={@can_invite}
+              patch={~p"/c/#{@current_community.slug}/invite"}
+              class="flex items-center gap-1.5 rounded px-2 py-1 text-sm text-muted hover:text-base-content"
+            >
+              <.icon name="hero-user-plus" class="size-4" /> Invite people
+            </.link>
           <% end %>
         </div>
         <div class="h-12 shrink-0 border-t border-subtle px-3 flex items-center gap-2">
@@ -136,6 +143,85 @@ defmodule RChatWeb.ChatLive do
                 </.form>
               </div>
             </div>
+          <% @live_action == :invite -> %>
+            <div class="flex-1 overflow-y-auto p-6">
+              <div class="w-full max-w-md mx-auto space-y-6">
+                <h1 class="text-lg font-semibold">Invite people to {@current_community.name}</h1>
+
+                <form phx-submit="create_invite" class="space-y-3">
+                  <div class="grid grid-cols-2 gap-3">
+                    <label class="text-sm space-y-1">
+                      <span class="text-muted">Expires after</span>
+                      <select name="expires_in" class="select w-full">
+                        <option value="1h">1 hour</option>
+                        <option value="1d">1 day</option>
+                        <option value="7d" selected>7 days</option>
+                        <option value="never">Never</option>
+                      </select>
+                    </label>
+                    <label class="text-sm space-y-1">
+                      <span class="text-muted">Max uses</span>
+                      <select name="max_uses" class="select w-full">
+                        <option value="">No limit</option>
+                        <option value="1">1</option>
+                        <option value="10">10</option>
+                        <option value="25">25</option>
+                      </select>
+                    </label>
+                  </div>
+                  <.button class="btn btn-primary w-full">Generate invite link</.button>
+                </form>
+
+                <div :if={@created_invite} class="space-y-2">
+                  <p class="text-sm text-muted">Share this link:</p>
+                  <div class="flex gap-2">
+                    <input
+                      id="invite-url"
+                      type="text"
+                      readonly
+                      value={url(~p"/join/#{@created_invite.code}")}
+                      class="input flex-1 font-mono text-sm"
+                    />
+                    <button
+                      type="button"
+                      id="copy-invite"
+                      phx-hook=".Copy"
+                      data-target="invite-url"
+                      class="btn"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                </div>
+
+                <div :if={@active_invites != []} class="space-y-2">
+                  <p class="text-sm font-semibold text-muted">Active invites</p>
+                  <div
+                    :for={invite <- @active_invites}
+                    class="flex items-center justify-between rounded border border-subtle px-3 py-2 text-sm"
+                  >
+                    <span class="font-mono">{invite.code}</span>
+                    <span class="text-muted">
+                      {invite.uses}{if invite.max_uses, do: "/#{invite.max_uses}"} uses, {if invite.expires_at,
+                        do: "expires #{Calendar.strftime(invite.expires_at, "%d/%m %H:%M")}",
+                        else: "never expires"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <script :type={Phoenix.LiveView.ColocatedHook} name=".Copy">
+              export default {
+                mounted() {
+                  this.el.addEventListener("click", () => {
+                    const input = document.getElementById(this.el.dataset.target)
+                    navigator.clipboard.writeText(input.value)
+                    this.el.textContent = "Copied"
+                    setTimeout(() => { this.el.textContent = "Copy" }, 1500)
+                  })
+                }
+              }
+            </script>
           <% @current_channel -> %>
             <div class="h-12 shrink-0 border-b border-subtle px-4 flex items-center gap-2 min-w-0">
               <span class="font-semibold">
@@ -246,7 +332,13 @@ defmodule RChatWeb.ChatLive do
             :for={member <- @members}
             class="flex items-center gap-2 px-2 py-1 text-sm text-muted"
           >
-            <span class="size-2 rounded-full bg-base-content/20"></span>
+            <span class={[
+              "size-2 rounded-full",
+              if(MapSet.member?(@online, to_string(member.user_id)),
+                do: "bg-success",
+                else: "bg-base-content/20"
+              )
+            ]}></span>
             <span class="truncate">{member.nickname || member.user.username}</span>
           </div>
         </div>
@@ -267,9 +359,14 @@ defmodule RChatWeb.ChatLive do
        current_channel: nil,
        members: [],
        can_manage_channels: false,
+       can_invite: false,
+       active_invites: [],
+       created_invite: nil,
        form: nil,
        subscribed_channel: nil,
-       last_message: nil
+       last_message: nil,
+       presence_community: nil,
+       online: MapSet.new()
      )
      |> stream(:messages, [])}
   end
@@ -328,10 +425,35 @@ defmodule RChatWeb.ChatLive do
       current_channel: current_channel,
       members: Communities.list_members(community),
       can_manage_channels: Communities.permitted?(scope, community, :manage_channels),
+      can_invite: Communities.permitted?(scope, community, :create_invites),
       last_message: last_message
     )
     |> maybe_subscribe(current_channel)
+    |> maybe_track_presence(community)
     |> stream(:messages, items, reset: true)
+  end
+
+  defp apply_action(socket, :invite, %{"slug" => slug}) do
+    scope = socket.assigns.current_scope
+    community = Communities.get_community!(scope, slug)
+
+    if Communities.permitted?(scope, community, :create_invites) do
+      assign(socket,
+        page_title: "Invite people",
+        current_community: community,
+        channels: Communities.list_channels(community),
+        current_channel: nil,
+        members: Communities.list_members(community),
+        can_manage_channels: Communities.permitted?(scope, community, :manage_channels),
+        can_invite: true,
+        active_invites: Communities.list_active_invites(scope, community),
+        created_invite: nil
+      )
+    else
+      socket
+      |> put_flash(:error, "You are not allowed to create invites.")
+      |> push_patch(to: ~p"/c/#{community.slug}")
+    end
   end
 
   defp apply_action(socket, :new_channel, %{"slug" => slug}) do
@@ -394,6 +516,26 @@ defmodule RChatWeb.ChatLive do
     end
   end
 
+  def handle_event("create_invite", params, socket) do
+    %{current_scope: scope, current_community: community} = socket.assigns
+    attrs = %{expires_at: parse_expiry(params["expires_in"]), max_uses: parse_max_uses(params)}
+
+    case Communities.create_invite(scope, community, attrs) do
+      {:ok, invite} ->
+        {:noreply,
+         assign(socket,
+           created_invite: invite,
+           active_invites: Communities.list_active_invites(scope, community)
+         )}
+
+      {:error, :unauthorized} ->
+        {:noreply, put_flash(socket, :error, "You are not allowed to create invites.")}
+
+      {:error, %Ecto.Changeset{}} ->
+        {:noreply, put_flash(socket, :error, "Could not create this invite.")}
+    end
+  end
+
   def handle_event("send_message", %{"content" => content}, socket) do
     %{current_scope: scope, current_community: community, current_channel: channel} =
       socket.assigns
@@ -411,6 +553,23 @@ defmodule RChatWeb.ChatLive do
   end
 
   @impl true
+  def handle_info(%Phoenix.Socket.Broadcast{event: "presence_diff"}, socket) do
+    case socket.assigns.presence_community do
+      nil ->
+        {:noreply, socket}
+
+      community ->
+        online =
+          community
+          |> presence_topic()
+          |> RChatWeb.Presence.list()
+          |> Map.keys()
+          |> MapSet.new()
+
+        {:noreply, assign(socket, online: online)}
+    end
+  end
+
   def handle_info({:message_created, message}, socket) do
     %{current_channel: current_channel, last_message: last_message} = socket.assigns
 
@@ -423,6 +582,38 @@ defmodule RChatWeb.ChatLive do
        |> assign(last_message: message)}
     else
       {:noreply, socket}
+    end
+  end
+
+  defp presence_topic(community), do: "presence:community:#{community.id}"
+
+  defp maybe_track_presence(socket, community) do
+    previous = socket.assigns.presence_community
+
+    cond do
+      not connected?(socket) ->
+        socket
+
+      previous && previous.id == community.id ->
+        socket
+
+      true ->
+        user = socket.assigns.current_scope.user
+
+        if previous do
+          RChatWeb.Presence.untrack(self(), presence_topic(previous), to_string(user.id))
+          Phoenix.PubSub.unsubscribe(RChat.PubSub, presence_topic(previous))
+        end
+
+        topic = presence_topic(community)
+        Phoenix.PubSub.subscribe(RChat.PubSub, topic)
+
+        {:ok, _} =
+          RChatWeb.Presence.track(self(), topic, to_string(user.id), %{username: user.username})
+
+        online = topic |> RChatWeb.Presence.list() |> Map.keys() |> MapSet.new()
+
+        assign(socket, presence_community: community, online: online)
     end
   end
 
@@ -457,6 +648,16 @@ defmodule RChatWeb.ChatLive do
   end
 
   defp format_time(datetime), do: Calendar.strftime(datetime, "%H:%M")
+
+  defp parse_expiry("1h"), do: DateTime.add(DateTime.utc_now(:second), 1, :hour)
+  defp parse_expiry("1d"), do: DateTime.add(DateTime.utc_now(:second), 1, :day)
+  defp parse_expiry("7d"), do: DateTime.add(DateTime.utc_now(:second), 7, :day)
+  defp parse_expiry(_), do: nil
+
+  defp parse_max_uses(%{"max_uses" => value}) when value in ~w(1 10 25),
+    do: String.to_integer(value)
+
+  defp parse_max_uses(_), do: nil
 
   @avatar_colors [
     "bg-sky-900 text-sky-200",

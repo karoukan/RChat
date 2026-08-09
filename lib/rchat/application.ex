@@ -14,6 +14,7 @@ defmodule RChat.Application do
        repos: Application.fetch_env!(:rchat, :ecto_repos), skip: skip_migrations?()},
       {DNSCluster, query: Application.get_env(:rchat, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: RChat.PubSub},
+      RChatWeb.Presence,
       # Start a worker by calling: RChat.Worker.start_link(arg)
       # {RChat.Worker, arg},
       # Start to serve requests, typically the last entry

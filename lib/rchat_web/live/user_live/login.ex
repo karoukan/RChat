@@ -49,6 +49,7 @@ defmodule RChatWeb.UserLive.Login do
             spellcheck="false"
             required
           />
+          <input :if={@return_to} type="hidden" name={f[:return_to].name} value={@return_to} />
           <.button class="btn btn-primary w-full" name={f[:remember_me].name} value="true">
             Log in and stay logged in
           </.button>
@@ -62,15 +63,20 @@ defmodule RChatWeb.UserLive.Login do
   end
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(params, _session, socket) do
     email =
       Phoenix.Flash.get(socket.assigns.flash, :email) ||
         get_in(socket.assigns, [:current_scope, Access.key(:user), Access.key(:email)])
 
     form = to_form(%{"email" => email}, as: "user")
 
-    {:ok, assign(socket, form: form, trigger_submit: false)}
+    {:ok, assign(socket, form: form, trigger_submit: false, return_to: return_to(params))}
   end
+
+  defp return_to(%{"return_to" => path}), do: return_to(path)
+  defp return_to("//" <> _), do: nil
+  defp return_to("/" <> _ = path), do: path
+  defp return_to(_), do: nil
 
   @impl true
   def handle_event("submit", _params, socket) do

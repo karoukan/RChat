@@ -126,6 +126,109 @@ defmodule RChat.CommunitiesTest do
     end
   end
 
+  describe "invites" do
+    setup do
+      owner_scope = user_scope_fixture()
+      community = community_fixture(owner_scope)
+
+      %{owner_scope: owner_scope, community: community}
+    end
+
+    test "create_invite/3 generates a code", %{owner_scope: scope, community: community} do
+      {:ok, invite} = Communities.create_invite(scope, community)
+
+      assert is_binary(invite.code)
+      assert invite.uses == 0
+      assert invite.created_by_id == scope.user.id
+      assert Communities.invite_status(invite) == :valid
+    end
+
+    test "create_invite/3 is allowed for plain members", %{community: community} do
+      member_scope = user_scope_fixture()
+      join_community(member_scope.user, community)
+
+      assert {:ok, _invite} = Communities.create_invite(member_scope, community)
+    end
+
+    test "create_invite/3 rejects non members", %{community: community} do
+      stranger = user_scope_fixture()
+
+      assert {:error, :unauthorized} = Communities.create_invite(stranger, community)
+    end
+
+    test "accept_invite/2 creates the membership and burns a use", %{
+      owner_scope: scope,
+      community: community
+    } do
+      {:ok, invite} = Communities.create_invite(scope, community, %{max_uses: 2})
+      joiner = user_scope_fixture()
+
+      assert {:ok, joined} = Communities.accept_invite(joiner, invite.code)
+      assert joined.id == community.id
+      assert Communities.get_membership(joiner, community)
+      assert Repo.get!(Communities.Invite, invite.id).uses == 1
+    end
+
+    test "accept_invite/2 rejects unknown codes" do
+      joiner = user_scope_fixture()
+
+      assert {:error, :not_found} = Communities.accept_invite(joiner, "nope")
+    end
+
+    test "accept_invite/2 rejects expired invites", %{owner_scope: scope, community: community} do
+      past = DateTime.add(DateTime.utc_now(), -60)
+      {:ok, invite} = Communities.create_invite(scope, community, %{expires_at: past})
+      joiner = user_scope_fixture()
+
+      assert {:error, :expired} = Communities.accept_invite(joiner, invite.code)
+      refute Communities.get_membership(joiner, community)
+    end
+
+    test "accept_invite/2 rejects exhausted invites without burning a use", %{
+      owner_scope: scope,
+      community: community
+    } do
+      {:ok, invite} = Communities.create_invite(scope, community, %{max_uses: 1})
+
+      assert {:ok, _} = Communities.accept_invite(user_scope_fixture(), invite.code)
+      assert {:error, :exhausted} = Communities.accept_invite(user_scope_fixture(), invite.code)
+      assert Repo.get!(Communities.Invite, invite.id).uses == 1
+    end
+
+    test "accept_invite/2 rejects existing members", %{owner_scope: scope, community: community} do
+      {:ok, invite} = Communities.create_invite(scope, community)
+
+      assert {:error, :already_member} = Communities.accept_invite(scope, invite.code)
+    end
+
+    test "list_active_invites/2 excludes expired and exhausted invites", %{
+      owner_scope: scope,
+      community: community
+    } do
+      {:ok, active} = Communities.create_invite(scope, community)
+
+      {:ok, _expired} =
+        Communities.create_invite(scope, community, %{
+          expires_at: DateTime.add(DateTime.utc_now(), -60)
+        })
+
+      {:ok, exhausted} = Communities.create_invite(scope, community, %{max_uses: 1})
+      {:ok, _} = Communities.accept_invite(user_scope_fixture(), exhausted.code)
+
+      assert [invite] = Communities.list_active_invites(scope, community)
+      assert invite.id == active.id
+    end
+
+    test "list_active_invites/2 returns nothing for non members", %{
+      owner_scope: scope,
+      community: community
+    } do
+      {:ok, _invite} = Communities.create_invite(scope, community)
+
+      assert Communities.list_active_invites(user_scope_fixture(), community) == []
+    end
+  end
+
   describe "permitted?/3" do
     setup do
       owner_scope = user_scope_fixture()
