@@ -235,42 +235,43 @@ defmodule RChatWeb.ChatLive do
               </span>
             </div>
             <div
-              id="messages"
-              phx-update="stream"
+              id="messages-scroll"
               phx-hook=".AutoScroll"
-              class="flex-1 overflow-y-auto px-4 py-4"
+              class="flex-1 overflow-y-auto px-4 py-4 flex flex-col"
             >
-              <div id="messages-empty" class="hidden only:block pt-2 text-sm text-muted">
-                This is the beginning of <span class="font-medium">#{@current_channel.name}</span>.
-              </div>
-              <div
-                :for={{dom_id, item} <- @streams.messages}
-                id={dom_id}
-                class={["group", if(item.compact, do: "mt-px", else: "mt-4 first:mt-0")]}
-              >
-                <div :if={item.compact} class="flex gap-3">
-                  <div class="w-9 shrink-0 text-right text-[10px] leading-6 text-muted opacity-0 group-hover:opacity-100">
-                    {format_time(item.message.inserted_at)}
-                  </div>
-                  <p class="flex-1 min-w-0 text-sm whitespace-pre-wrap break-words">
-                    {item.message.content}
-                  </p>
+              <div id="messages" phx-update="stream" class="mt-auto">
+                <div id="messages-empty" class="hidden only:block pt-2 text-sm text-muted">
+                  This is the beginning of <span class="font-medium">#{@current_channel.name}</span>.
                 </div>
-                <div :if={!item.compact} class="flex gap-3">
-                  <div class={[
-                    "size-9 shrink-0 rounded-full flex items-center justify-center text-sm font-semibold",
-                    avatar_color(item.message.author)
-                  ]}>
-                    {avatar_initial(item.message.author)}
-                  </div>
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-baseline gap-2">
-                      <span class="text-sm font-semibold">{author_name(item.message.author)}</span>
-                      <span class="text-[11px] text-muted">
-                        {format_time(item.message.inserted_at)}
-                      </span>
+                <div
+                  :for={{dom_id, item} <- @streams.messages}
+                  id={dom_id}
+                  class={["group", if(item.compact, do: "mt-0.5", else: "mt-4 first:mt-0")]}
+                >
+                  <div :if={item.compact} class="flex gap-3">
+                    <div class="w-9 shrink-0 text-right text-[10px] leading-6 text-muted opacity-0 group-hover:opacity-100">
+                      {format_time(item.message.inserted_at)}
                     </div>
-                    <p class="text-sm whitespace-pre-wrap break-words">{item.message.content}</p>
+                    <p class="flex-1 min-w-0 text-sm whitespace-pre-wrap break-words">
+                      {item.message.content}
+                    </p>
+                  </div>
+                  <div :if={!item.compact} class="flex gap-3">
+                    <div class={[
+                      "size-9 shrink-0 rounded-full flex items-center justify-center text-sm font-semibold",
+                      avatar_color(item.message.author)
+                    ]}>
+                      {avatar_initial(item.message.author)}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-baseline gap-2">
+                        <span class="text-sm font-semibold">{author_name(item.message.author)}</span>
+                        <span class="text-[11px] text-muted">
+                          {format_time(item.message.inserted_at)}
+                        </span>
+                      </div>
+                      <p class="text-sm whitespace-pre-wrap break-words">{item.message.content}</p>
+                    </div>
                   </div>
                 </div>
               </div>
