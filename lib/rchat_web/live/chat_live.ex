@@ -233,6 +233,10 @@ defmodule RChatWeb.ChatLive do
               >
                 {@current_channel.topic}
               </span>
+              <span class="ml-auto flex items-center gap-1.5 text-xs text-muted whitespace-nowrap">
+                <span class="size-2 rounded-full bg-success"></span>
+                {MapSet.size(@online)} online
+              </span>
             </div>
             <div
               id="messages-scroll"
@@ -248,6 +252,11 @@ defmodule RChatWeb.ChatLive do
                   id={dom_id}
                   class={["group", if(item.compact, do: "mt-0.5", else: "mt-4 first:mt-0")]}
                 >
+                  <div :if={item.divider} class="flex items-center gap-3 mb-4 text-[11px] text-muted">
+                    <span class="h-px flex-1 bg-subtle"></span>
+                    {Calendar.strftime(item.divider, "%d/%m/%Y")}
+                    <span class="h-px flex-1 bg-subtle"></span>
+                  </div>
                   <div :if={item.compact} class="flex gap-3">
                     <div class="w-9 shrink-0 text-right text-[10px] leading-6 text-muted opacity-0 group-hover:opacity-100">
                       {format_time(item.message.inserted_at)}
@@ -575,11 +584,9 @@ defmodule RChatWeb.ChatLive do
     %{current_channel: current_channel, last_message: last_message} = socket.assigns
 
     if current_channel && message.channel_id == current_channel.id do
-      item = %{id: message.id, message: message, compact: compact?(message, last_message)}
-
       {:noreply,
        socket
-       |> stream_insert(:messages, item)
+       |> stream_insert(:messages, message_item(message, last_message))
        |> assign(last_message: message)}
     else
       {:noreply, socket}
@@ -637,8 +644,27 @@ defmodule RChatWeb.ChatLive do
 
   defp group_messages(messages) do
     Enum.map_reduce(messages, nil, fn message, previous ->
-      {%{id: message.id, message: message, compact: compact?(message, previous)}, message}
+      {message_item(message, previous), message}
     end)
+  end
+
+  defp message_item(message, previous) do
+    divider = day_divider(message, previous)
+
+    %{
+      id: message.id,
+      message: message,
+      divider: divider,
+      compact: is_nil(divider) and compact?(message, previous)
+    }
+  end
+
+  defp day_divider(message, previous) do
+    date = DateTime.to_date(message.inserted_at)
+
+    if is_nil(previous) or DateTime.to_date(previous.inserted_at) != date do
+      date
+    end
   end
 
   defp compact?(_message, nil), do: false

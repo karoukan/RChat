@@ -125,6 +125,16 @@ defmodule RChatWeb.ChatLiveTest do
       assert message.content == "hello from the owner"
     end
 
+    test "shows a day separator before the first message", %{conn: conn, community: community} do
+      {:ok, lv, _html} = live(conn, ~p"/c/#{community.slug}")
+
+      lv
+      |> form("#composer", %{"content" => "first of the day"})
+      |> render_submit()
+
+      assert render(lv) =~ Calendar.strftime(Date.utc_today(), "%d/%m/%Y")
+    end
+
     test "receives messages from other members in realtime", %{conn: conn, community: community} do
       member = user_fixture()
       join_community(member, community)
