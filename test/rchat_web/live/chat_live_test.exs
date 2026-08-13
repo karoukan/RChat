@@ -120,7 +120,7 @@ defmodule RChatWeb.ChatLiveTest do
       |> form("#composer", %{"content" => "hello from the owner"})
       |> render_submit()
 
-      assert render(lv) =~ "hello from the owner"
+      assert render(lv) =~ ">hello from the owner</p>"
       assert [message] = RChat.Chat.list_messages(hd(Communities.list_channels(community)))
       assert message.content == "hello from the owner"
     end

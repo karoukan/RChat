@@ -261,9 +261,10 @@ defmodule RChatWeb.ChatLive do
                     <div class="w-9 shrink-0 text-right text-[10px] leading-6 text-muted opacity-0 group-hover:opacity-100">
                       {format_time(item.message.inserted_at)}
                     </div>
-                    <p class="flex-1 min-w-0 text-sm whitespace-pre-wrap break-words">
-                      {item.message.content}
-                    </p>
+                    <p
+                      class="flex-1 min-w-0 text-sm whitespace-pre-wrap break-words"
+                      phx-no-format
+                    >{item.message.content}</p>
                   </div>
                   <div :if={!item.compact} class="flex gap-3">
                     <div class={[
@@ -279,7 +280,7 @@ defmodule RChatWeb.ChatLive do
                           {format_time(item.message.inserted_at)}
                         </span>
                       </div>
-                      <p class="text-sm whitespace-pre-wrap break-words">{item.message.content}</p>
+                      <p class="text-sm whitespace-pre-wrap break-words" phx-no-format>{item.message.content}</p>
                     </div>
                   </div>
                 </div>
