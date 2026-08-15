@@ -8,14 +8,14 @@ defmodule RChatWeb.ChatLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex h-screen bg-base-100 text-base-content">
+    <div id="chat-root" phx-hook=".ChannelNav" class="flex h-screen bg-base-100 text-base-content">
       <nav class="w-16 shrink-0 bg-base-300 flex flex-col items-center gap-2 py-3 overflow-y-auto">
         <.link
           :for={community <- @communities}
           patch={~p"/c/#{community.slug}"}
           title={community.name}
           class={[
-            "flex size-11 shrink-0 items-center justify-center rounded-xl text-sm font-semibold transition-colors",
+            "flex size-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-colors",
             if(@current_community && @current_community.id == community.id,
               do: "bg-primary text-primary-content",
               else: "bg-base-100 text-muted hover:text-base-content"
@@ -27,7 +27,7 @@ defmodule RChatWeb.ChatLive do
         <.link
           patch={~p"/communities/new"}
           title="New community"
-          class="flex size-11 shrink-0 items-center justify-center rounded-xl bg-base-100 text-muted hover:text-primary"
+          class="flex size-11 shrink-0 items-center justify-center rounded-full bg-base-100 text-muted hover:text-primary"
         >
           <.icon name="hero-plus" class="size-5" />
           <span class="sr-only">New community</span>
@@ -238,83 +238,234 @@ defmodule RChatWeb.ChatLive do
                 {MapSet.size(@online)} online
               </span>
             </div>
-            <div
-              id="messages-scroll"
-              phx-hook=".AutoScroll"
-              class="flex-1 overflow-y-auto px-4 py-4 flex flex-col"
-            >
-              <div id="messages" phx-update="stream" class="mt-auto">
-                <div id="messages-empty" class="hidden only:block pt-2 text-sm text-muted">
-                  This is the beginning of <span class="font-medium">#{@current_channel.name}</span>.
-                </div>
-                <div
-                  :for={{dom_id, item} <- @streams.messages}
-                  id={dom_id}
-                  class={["group", if(item.compact, do: "mt-0.5", else: "mt-4 first:mt-0")]}
-                >
-                  <div :if={item.divider} class="flex items-center gap-3 mb-4 text-[11px] text-muted">
-                    <span class="h-px flex-1 bg-subtle"></span>
-                    {Calendar.strftime(item.divider, "%d/%m/%Y")}
-                    <span class="h-px flex-1 bg-subtle"></span>
+            <div class="relative flex-1 min-h-0 flex flex-col">
+              <div
+                id="messages-scroll"
+                phx-hook=".ScrollManager"
+                data-channel-id={@current_channel.id}
+                class="flex-1 overflow-y-auto px-4 py-4 flex flex-col"
+              >
+                <div id="messages" phx-update="stream" class="mt-auto">
+                  <div id="messages-empty" class="hidden only:block pt-2 text-sm text-muted">
+                    This is the beginning of <span class="font-medium">#{@current_channel.name}</span>.
                   </div>
-                  <div :if={item.compact} class="flex gap-3">
-                    <div class="w-9 shrink-0 text-right text-[10px] leading-6 text-muted opacity-0 group-hover:opacity-100">
-                      {format_time(item.message.inserted_at)}
+                  <div
+                    :for={{dom_id, item} <- @streams.messages}
+                    id={dom_id}
+                    class={["group", if(item.compact, do: "mt-0.5", else: "mt-4 first:mt-0")]}
+                  >
+                    <div
+                      :if={item.divider}
+                      class="flex items-center gap-3 mb-4 text-[11px] text-muted"
+                    >
+                      <span class="h-px flex-1 bg-subtle"></span>
+                      <time
+                        id={"divider-#{dom_id}"}
+                        phx-hook=".LocalTime"
+                        data-kind="date"
+                        data-ts={Date.to_iso8601(item.divider)}
+                      >
+                        {Calendar.strftime(item.divider, "%d/%m/%Y")}
+                      </time>
+                      <span class="h-px flex-1 bg-subtle"></span>
                     </div>
-                    <p
-                      class="flex-1 min-w-0 text-sm whitespace-pre-wrap break-words"
-                      phx-no-format
-                    >{item.message.content}</p>
-                  </div>
-                  <div :if={!item.compact} class="flex gap-3">
-                    <div class={[
-                      "size-9 shrink-0 rounded-full flex items-center justify-center text-sm font-semibold",
-                      avatar_color(item.message.author)
-                    ]}>
-                      {avatar_initial(item.message.author)}
-                    </div>
-                    <div class="flex-1 min-w-0">
-                      <div class="flex items-baseline gap-2">
-                        <span class="text-sm font-semibold">{author_name(item.message.author)}</span>
-                        <span class="text-[11px] text-muted">
+                    <div :if={item.compact} class="flex gap-3">
+                      <div class="w-9 shrink-0 text-right text-[10px] leading-6 text-muted opacity-0 group-hover:opacity-100">
+                        <time
+                          id={"time-#{dom_id}"}
+                          phx-hook=".LocalTime"
+                          data-ts={DateTime.to_iso8601(item.message.inserted_at)}
+                        >
                           {format_time(item.message.inserted_at)}
-                        </span>
+                        </time>
                       </div>
-                      <p class="text-sm whitespace-pre-wrap break-words" phx-no-format>{item.message.content}</p>
+                      <p
+                        class="flex-1 min-w-0 text-sm whitespace-pre-wrap break-words"
+                        phx-no-format
+                      >{item.message.content}</p>
+                    </div>
+                    <div :if={!item.compact} class="flex gap-3">
+                      <div class={[
+                        "size-9 shrink-0 rounded-full flex items-center justify-center text-sm font-semibold",
+                        avatar_color(item.message.author)
+                      ]}>
+                        {avatar_initial(item.message.author)}
+                      </div>
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-baseline gap-2">
+                          <span class="text-sm font-semibold">{author_name(item.message.author)}</span>
+                          <time
+                            id={"time-#{dom_id}"}
+                            phx-hook=".LocalTime"
+                            class="text-[11px] text-muted"
+                            data-ts={DateTime.to_iso8601(item.message.inserted_at)}
+                          >
+                            {format_time(item.message.inserted_at)}
+                          </time>
+                        </div>
+                        <p class="text-sm whitespace-pre-wrap break-words" phx-no-format>{item.message.content}</p>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
+              <button
+                id="new-messages-pill"
+                type="button"
+                class="hidden absolute bottom-3 left-1/2 -translate-x-1/2 btn btn-primary btn-xs rounded-full"
+              ></button>
             </div>
-            <form id="composer" phx-submit="send_message" phx-hook=".Composer" class="shrink-0 p-3">
-              <input
-                type="text"
+            <form
+              id="composer"
+              phx-submit="send_message"
+              phx-hook=".Composer"
+              class="shrink-0 p-3 flex items-end gap-2"
+            >
+              <textarea
                 name="content"
-                class="input w-full"
+                rows="1"
+                class="textarea w-full resize-none leading-5"
                 placeholder={"Message ##{@current_channel.name}"}
                 autocomplete="off"
                 maxlength="4000"
                 required
-              />
+              ></textarea>
+              <button type="submit" class="btn btn-primary hidden pointer-coarse:inline-flex">
+                <.icon name="hero-paper-airplane" class="size-5" />
+                <span class="sr-only">Send</span>
+              </button>
             </form>
-            <script :type={Phoenix.LiveView.ColocatedHook} name=".AutoScroll">
+            <script :type={Phoenix.LiveView.ColocatedHook} name=".ScrollManager">
               export default {
-                mounted() { this.scroll() },
-                beforeUpdate() {
-                  this.follow =
-                    this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight < 120
+                mounted() {
+                  this.pill = document.getElementById("new-messages-pill")
+                  this.channelId = this.el.dataset.channelId
+                  this.count = 0
+                  this.lastChildren = this.childCount()
+                  this.el.addEventListener("scroll", () => {
+                    if (this.nearBottom()) this.hidePill()
+                  })
+                  this.pill.addEventListener("click", () => {
+                    this.scrollBottom()
+                    this.hidePill()
+                  })
+                  this.scrollBottom()
                 },
-                updated() { if (this.follow) this.scroll() },
-                scroll() { this.el.scrollTop = this.el.scrollHeight }
+                beforeUpdate() { this.follow = this.nearBottom() },
+                updated() {
+                  if (this.channelId !== this.el.dataset.channelId) {
+                    this.channelId = this.el.dataset.channelId
+                    this.lastChildren = this.childCount()
+                    this.hidePill()
+                    this.scrollBottom()
+                    return
+                  }
+                  const children = this.childCount()
+                  const added = Math.max(0, children - this.lastChildren)
+                  this.lastChildren = children
+                  if (this.follow) {
+                    this.scrollBottom()
+                  } else if (added > 0) {
+                    this.count += added
+                    this.pill.textContent =
+                      this.count === 1 ? "1 new message" : `${this.count} new messages`
+                    this.pill.classList.remove("hidden")
+                  }
+                },
+                childCount() { return document.getElementById("messages").childElementCount },
+                nearBottom() {
+                  return this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight < 120
+                },
+                scrollBottom() { this.el.scrollTop = this.el.scrollHeight },
+                hidePill() { this.count = 0; this.pill.classList.add("hidden") }
               }
             </script>
             <script :type={Phoenix.LiveView.ColocatedHook} name=".Composer">
               export default {
                 mounted() {
+                  this.textarea = this.el.querySelector("textarea")
+                  this.coarse = window.matchMedia("(pointer: coarse)").matches
+
                   this.el.addEventListener("submit", () => {
-                    requestAnimationFrame(() => this.el.reset())
+                    requestAnimationFrame(() => {
+                      this.el.reset()
+                      this.autogrow()
+                      this.textarea.focus()
+                    })
                   })
+
+                  this.textarea.addEventListener("keydown", e => {
+                    if (e.key === "Enter" && !e.shiftKey && !this.coarse) {
+                      e.preventDefault()
+                      if (this.textarea.value.trim() !== "") this.el.requestSubmit()
+                    }
+                  })
+                  this.textarea.addEventListener("input", () => this.autogrow())
+
+                  this.refocus = e => {
+                    if (e.metaKey || e.ctrlKey || e.altKey || e.key.length !== 1) return
+                    const t = e.target
+                    if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return
+                    this.textarea.focus()
+                  }
+                  window.addEventListener("keydown", this.refocus)
+
+                  this.textarea.focus()
+                  this.autogrow()
+                },
+                updated() {
+                  if (document.activeElement === document.body) this.textarea.focus()
+                },
+                destroyed() {
+                  window.removeEventListener("keydown", this.refocus)
+                },
+                autogrow() {
+                  const ta = this.textarea
+                  ta.style.height = "auto"
+                  const line = parseFloat(getComputedStyle(ta).lineHeight) || 20
+                  const max = line * 8 + 16
+                  ta.style.height = Math.min(ta.scrollHeight, max) + "px"
+                  ta.style.overflowY = ta.scrollHeight > max ? "auto" : "hidden"
                 }
+              }
+            </script>
+            <script :type={Phoenix.LiveView.ColocatedHook} name=".LocalTime">
+              export default {
+                mounted() { this.format() },
+                updated() { this.format() },
+                format() {
+                  const ts = this.el.dataset.ts
+                  if (this.el.dataset.kind === "date") {
+                    const [y, m, d] = ts.split("-").map(Number)
+                    const date = new Date(y, m - 1, d)
+                    const today = new Date()
+                    today.setHours(0, 0, 0, 0)
+                    const diff = Math.round((date - today) / 86400000)
+                    if (diff === 0 || diff === -1) {
+                      const label = new Intl.RelativeTimeFormat([], {numeric: "auto"}).format(diff, "day")
+                      this.el.textContent = label.charAt(0).toUpperCase() + label.slice(1)
+                    } else {
+                      this.el.textContent = new Intl.DateTimeFormat([], {dateStyle: "long"}).format(date)
+                    }
+                  } else {
+                    this.el.textContent =
+                      new Intl.DateTimeFormat([], {timeStyle: "short"}).format(new Date(ts))
+                  }
+                }
+              }
+            </script>
+            <script :type={Phoenix.LiveView.ColocatedHook} name=".ChannelNav">
+              export default {
+                mounted() {
+                  this.onKey = e => {
+                    if (e.altKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+                      e.preventDefault()
+                      this.pushEvent("channel_nav", {dir: e.key === "ArrowUp" ? "prev" : "next"})
+                    }
+                  }
+                  window.addEventListener("keydown", this.onKey)
+                },
+                destroyed() { window.removeEventListener("keydown", this.onKey) }
               }
             </script>
           <% true -> %>
@@ -551,15 +702,43 @@ defmodule RChatWeb.ChatLive do
     %{current_scope: scope, current_community: community, current_channel: channel} =
       socket.assigns
 
-    case Chat.create_message(scope, community, channel, %{content: content}) do
-      {:ok, _message} ->
+    case String.trim(content) do
+      "" ->
         {:noreply, socket}
 
-      {:error, :unauthorized} ->
-        {:noreply, put_flash(socket, :error, "You are not allowed to send messages here.")}
+      content ->
+        case Chat.create_message(scope, community, channel, %{content: content}) do
+          {:ok, _message} ->
+            {:noreply, socket}
 
-      {:error, %Ecto.Changeset{}} ->
-        {:noreply, socket}
+          {:error, :unauthorized} ->
+            {:noreply, put_flash(socket, :error, "You are not allowed to send messages here.")}
+
+          {:error, %Ecto.Changeset{}} ->
+            {:noreply, socket}
+        end
+    end
+  end
+
+  def handle_event("channel_nav", %{"dir" => dir}, socket) do
+    %{channels: channels, current_channel: current, current_community: community} =
+      socket.assigns
+
+    if community && channels != [] do
+      count = length(channels)
+      index = current && Enum.find_index(channels, &(&1.id == current.id))
+
+      next_index =
+        case {index, dir} do
+          {nil, _} -> 0
+          {i, "next"} -> rem(i + 1, count)
+          {i, _} -> rem(i - 1 + count, count)
+        end
+
+      channel = Enum.at(channels, next_index)
+      {:noreply, push_patch(socket, to: ~p"/c/#{community.slug}/#{channel.id}")}
+    else
+      {:noreply, socket}
     end
   end
 

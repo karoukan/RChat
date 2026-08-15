@@ -116,3 +116,8 @@
   --color-muted: var(--text-muted);
   --color-subtle: var(--border-subtle);
 }
+
+/* Poor man's optimistic send: dim the composer while waiting for the ack */
+#composer.phx-submit-loading textarea {
+  opacity: 0.6;
+}
