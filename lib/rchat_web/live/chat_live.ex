@@ -395,9 +395,11 @@ defmodule RChatWeb.ChatLive do
                   })
 
                   this.textarea.addEventListener("keydown", e => {
-                    if (e.key === "Enter" && !e.shiftKey && !this.coarse) {
+                    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !this.coarse) {
                       e.preventDefault()
-                      if (this.textarea.value.trim() !== "") this.el.requestSubmit()
+                      if (this.textarea.value.trim() !== "") {
+                        this.el.dispatchEvent(new Event("submit", {bubbles: true, cancelable: true}))
+                      }
                     }
                   })
                   this.textarea.addEventListener("input", () => this.autogrow())
