@@ -29,16 +29,28 @@ defmodule RChat.Chat do
 
   @doc """
   Returns the latest messages of a channel in chronological order.
+
+  `:before` takes a message id and returns the page of history right
+  above it, for upward pagination.
   """
   def list_messages(%Channel{} = channel, opts \\ []) do
     limit = Keyword.get(opts, :limit, @history_limit)
 
-    from(m in Message,
-      where: m.channel_id == ^channel.id and is_nil(m.deleted_at),
-      order_by: [desc: m.id],
-      limit: ^limit,
-      preload: [:author]
-    )
+    query =
+      from(m in Message,
+        where: m.channel_id == ^channel.id and is_nil(m.deleted_at),
+        order_by: [desc: m.id],
+        limit: ^limit,
+        preload: [:author]
+      )
+
+    query =
+      case Keyword.get(opts, :before) do
+        nil -> query
+        before_id -> where(query, [m], m.id < ^before_id)
+      end
+
+    query
     |> Repo.all()
     |> Enum.reverse()
   end

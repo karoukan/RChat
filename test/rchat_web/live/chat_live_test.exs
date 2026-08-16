@@ -152,6 +152,42 @@ defmodule RChatWeb.ChatLiveTest do
       assert html =~ member.username
     end
 
+    test "loads older history on demand and keeps the order", %{
+      conn: conn,
+      scope: scope,
+      community: community
+    } do
+      [channel] = Communities.list_channels(community)
+
+      for i <- 1..120 do
+        RChat.ChatFixtures.message_fixture(scope, community, channel, %{
+          content: "msg #{String.pad_leading(to_string(i), 3, "0")}"
+        })
+      end
+
+      {:ok, lv, html} = live(conn, ~p"/c/#{community.slug}")
+
+      assert html =~ "msg 120"
+      assert html =~ "msg 071"
+      refute html =~ "msg 070"
+
+      html = render_hook(lv, "load_older", %{})
+      assert html =~ "msg 021"
+      refute html =~ "msg 020"
+
+      {pos_a, _} = :binary.match(html, "msg 021")
+      {pos_b, _} = :binary.match(html, "msg 071")
+      {pos_c, _} = :binary.match(html, "msg 120")
+      assert pos_a < pos_b
+      assert pos_b < pos_c
+
+      html = render_hook(lv, "load_older", %{})
+      assert html =~ "msg 001"
+
+      html = render_hook(lv, "load_older", %{})
+      assert html =~ "msg 001"
+    end
+
     test "does not render messages from other channels", %{conn: conn, community: community} do
       other_scope = user_scope_fixture()
       other = community_fixture(other_scope, %{name: "Elsewhere"})

@@ -5,6 +5,8 @@ defmodule RChatWeb.ChatLive do
   alias RChat.Communities
   alias RChat.Communities.{Channel, Community}
 
+  @page_size 50
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -245,7 +247,12 @@ defmodule RChatWeb.ChatLive do
                 data-channel-id={@current_channel.id}
                 class="flex-1 overflow-y-auto px-4 py-4 flex flex-col"
               >
-                <div id="messages" phx-update="stream" class="mt-auto">
+                <div
+                  id="messages"
+                  phx-update="stream"
+                  phx-viewport-top={!@history_end && "load_older"}
+                  class="mt-auto"
+                >
                   <div id="messages-empty" class="hidden only:block pt-2 text-sm text-muted">
                     This is the beginning of <span class="font-medium">#{@current_channel.name}</span>.
                   </div>
@@ -351,7 +358,11 @@ defmodule RChatWeb.ChatLive do
                   })
                   this.scrollBottom()
                 },
-                beforeUpdate() { this.follow = this.nearBottom() },
+                beforeUpdate() {
+                  this.follow = this.nearBottom()
+                  this.prevHeight = this.el.scrollHeight
+                  this.prevFirstId = this.firstMessageId()
+                },
                 updated() {
                   if (this.channelId !== this.el.dataset.channelId) {
                     this.channelId = this.el.dataset.channelId
@@ -363,7 +374,11 @@ defmodule RChatWeb.ChatLive do
                   const children = this.childCount()
                   const added = Math.max(0, children - this.lastChildren)
                   this.lastChildren = children
-                  if (this.follow) {
+                  const prepended =
+                    this.prevFirstId && this.firstMessageId() !== this.prevFirstId && added > 0
+                  if (prepended && !this.follow) {
+                    this.el.scrollTop += this.el.scrollHeight - this.prevHeight
+                  } else if (this.follow) {
                     this.scrollBottom()
                   } else if (added > 0) {
                     this.count += added
@@ -371,6 +386,13 @@ defmodule RChatWeb.ChatLive do
                       this.count === 1 ? "1 new message" : `${this.count} new messages`
                     this.pill.classList.remove("hidden")
                   }
+                },
+                firstMessageId() {
+                  const items = document.getElementById("messages").children
+                  for (const el of items) {
+                    if (/^messages-\d+$/.test(el.id)) return el.id
+                  }
+                  return null
                 },
                 childCount() { return document.getElementById("messages").childElementCount },
                 nearBottom() {
@@ -529,6 +551,8 @@ defmodule RChatWeb.ChatLive do
        form: nil,
        subscribed_channel: nil,
        last_message: nil,
+       first_message: nil,
+       history_end: true,
        presence_community: nil,
        online: MapSet.new()
      )
@@ -578,7 +602,9 @@ defmodule RChatWeb.ChatLive do
         id -> Communities.get_channel!(community, id)
       end
 
-    messages = if current_channel, do: Chat.list_messages(current_channel), else: []
+    messages =
+      if current_channel, do: Chat.list_messages(current_channel, limit: @page_size), else: []
+
     {items, last_message} = group_messages(messages)
 
     socket
@@ -590,7 +616,9 @@ defmodule RChatWeb.ChatLive do
       members: Communities.list_members(community),
       can_manage_channels: Communities.permitted?(scope, community, :manage_channels),
       can_invite: Communities.permitted?(scope, community, :create_invites),
-      last_message: last_message
+      last_message: last_message,
+      first_message: List.first(messages),
+      history_end: length(messages) < @page_size
     )
     |> maybe_subscribe(current_channel)
     |> maybe_track_presence(community)
@@ -719,6 +747,35 @@ defmodule RChatWeb.ChatLive do
           {:error, %Ecto.Changeset{}} ->
             {:noreply, socket}
         end
+    end
+  end
+
+  def handle_event("load_older", _params, socket) do
+    %{current_channel: channel, first_message: first, history_end: history_end} = socket.assigns
+
+    if channel && first && !history_end do
+      older = Chat.list_messages(channel, before: first.id, limit: @page_size)
+      {items, last_of_batch} = group_messages(older)
+
+      socket =
+        items
+        |> Enum.reverse()
+        |> Enum.reduce(socket, fn item, acc -> stream_insert(acc, :messages, item, at: 0) end)
+
+      socket =
+        if last_of_batch do
+          stream_insert(socket, :messages, message_item(first, last_of_batch), at: length(items))
+        else
+          socket
+        end
+
+      {:noreply,
+       assign(socket,
+         first_message: List.first(older) || first,
+         history_end: length(older) < @page_size
+       )}
+    else
+      {:noreply, socket}
     end
   end
 

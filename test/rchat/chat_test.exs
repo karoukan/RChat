@@ -107,6 +107,23 @@ defmodule RChat.ChatTest do
       assert id2 == third.id
     end
 
+    test "paginates upward with :before", %{
+      scope: scope,
+      community: community,
+      channel: channel
+    } do
+      first = message_fixture(scope, community, channel)
+      second = message_fixture(scope, community, channel)
+      third = message_fixture(scope, community, channel)
+
+      assert [%{id: id1}, %{id: id2}] = Chat.list_messages(channel, before: third.id, limit: 2)
+      assert id1 == first.id
+      assert id2 == second.id
+
+      assert [%{id: ^id1}] = Chat.list_messages(channel, before: second.id, limit: 2)
+      assert Chat.list_messages(channel, before: first.id, limit: 2) == []
+    end
+
     test "excludes soft deleted messages", %{
       scope: scope,
       community: community,
