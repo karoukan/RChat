@@ -202,6 +202,58 @@ defmodule RChatWeb.ChatLiveTest do
       refute render(lv) =~ "private stuff"
     end
 
+    test "marks unread channels in the sidebar and clears them on visit", %{
+      conn: conn,
+      scope: scope,
+      community: community
+    } do
+      {:ok, random} = Communities.create_channel(scope, community, %{name: "random"})
+      [general] = Communities.list_channels(community) |> Enum.filter(&(&1.name == "general"))
+
+      member = user_fixture()
+      join_community(member, community)
+      member_scope = RChat.Accounts.Scope.for_user(member)
+
+      {:ok, lv, _html} = live(conn, ~p"/c/#{community.slug}/#{general.id}")
+
+      RChat.ChatFixtures.message_fixture(member_scope, community, random, %{
+        content: "unseen"
+      })
+
+      render(lv)
+      sidebar_link = ~s(a[href="/c/#{community.slug}/#{random.id}"].font-semibold)
+      assert has_element?(lv, sidebar_link)
+
+      {:ok, lv, _html} = live(conn, ~p"/c/#{community.slug}/#{random.id}")
+      refute has_element?(lv, sidebar_link)
+    end
+
+    test "positions on the first unread message", %{
+      conn: conn,
+      scope: scope,
+      community: community
+    } do
+      [channel] = Communities.list_channels(community)
+      member = user_fixture()
+      join_community(member, community)
+      member_scope = RChat.Accounts.Scope.for_user(member)
+
+      unread =
+        RChat.ChatFixtures.message_fixture(member_scope, community, channel, %{
+          content: "while away"
+        })
+
+      {:ok, _lv, html} = live(conn, ~p"/c/#{community.slug}")
+
+      assert html =~ ~s(data-first-unread="messages-#{unread.id}")
+    end
+
+    test "escape marks the channel read", %{conn: conn, community: community} do
+      {:ok, lv, _html} = live(conn, ~p"/c/#{community.slug}")
+
+      assert render_hook(lv, "mark_read", %{})
+    end
+
     test "plain members do not get the channel creation action", %{community: community} do
       member = user_fixture()
       join_community(member, community)

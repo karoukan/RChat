@@ -17,7 +17,7 @@ defmodule RChatWeb.ChatLive do
           patch={~p"/c/#{community.slug}"}
           title={community.name}
           class={[
-            "flex size-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-colors",
+            "relative flex size-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-colors",
             if(@current_community && @current_community.id == community.id,
               do: "bg-primary text-primary-content",
               else: "bg-base-100 text-muted hover:text-base-content"
@@ -25,6 +25,10 @@ defmodule RChatWeb.ChatLive do
           ]}
         >
           {initials(community.name)}
+          <span
+            :if={rail_unread?(community, @current_community, @unread_channels, @unread_communities)}
+            class="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-base-content"
+          ></span>
         </.link>
         <.link
           patch={~p"/communities/new"}
@@ -49,10 +53,7 @@ defmodule RChatWeb.ChatLive do
               patch={~p"/c/#{@current_community.slug}/#{channel.id}"}
               class={[
                 "flex items-center gap-1.5 rounded px-2 py-1 text-sm",
-                if(@current_channel && @current_channel.id == channel.id,
-                  do: "bg-base-300 text-base-content",
-                  else: "text-muted hover:bg-base-300/50 hover:text-base-content"
-                )
+                channel_class(channel, @current_channel, @unread_channels)
               ]}
             >
               <span class="opacity-60">#</span>{channel.name}
@@ -245,6 +246,7 @@ defmodule RChatWeb.ChatLive do
                 id="messages-scroll"
                 phx-hook=".ScrollManager"
                 data-channel-id={@current_channel.id}
+                data-first-unread={@first_unread_id && "messages-#{@first_unread_id}"}
                 class="flex-1 overflow-y-auto px-4 py-4 flex flex-col"
               >
                 <div
@@ -356,7 +358,7 @@ defmodule RChatWeb.ChatLive do
                     this.scrollBottom()
                     this.hidePill()
                   })
-                  this.scrollBottom()
+                  this.scrollToTarget()
                 },
                 beforeUpdate() {
                   this.follow = this.nearBottom()
@@ -368,7 +370,7 @@ defmodule RChatWeb.ChatLive do
                     this.channelId = this.el.dataset.channelId
                     this.lastChildren = this.childCount()
                     this.hidePill()
-                    this.scrollBottom()
+                    this.scrollToTarget()
                     return
                   }
                   const children = this.childCount()
@@ -399,6 +401,15 @@ defmodule RChatWeb.ChatLive do
                   return this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight < 120
                 },
                 scrollBottom() { this.el.scrollTop = this.el.scrollHeight },
+                scrollToTarget() {
+                  const targetId = this.el.dataset.firstUnread
+                  const target = targetId && document.getElementById(targetId)
+                  if (target) {
+                    target.scrollIntoView({block: "center"})
+                  } else {
+                    this.scrollBottom()
+                  }
+                },
                 hidePill() { this.count = 0; this.pill.classList.add("hidden") }
               }
             </script>
@@ -485,6 +496,8 @@ defmodule RChatWeb.ChatLive do
                     if (e.altKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
                       e.preventDefault()
                       this.pushEvent("channel_nav", {dir: e.key === "ArrowUp" ? "prev" : "next"})
+                    } else if (e.key === "Escape" && !e.altKey && !e.ctrlKey && !e.metaKey) {
+                      this.pushEvent("mark_read", {})
                     }
                   }
                   window.addEventListener("keydown", this.onKey)
@@ -536,10 +549,15 @@ defmodule RChatWeb.ChatLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    scope = socket.assigns.current_scope
+    communities = Communities.list_communities(scope)
+
+    if connected?(socket), do: Enum.each(communities, &Chat.subscribe_community/1)
+
     {:ok,
      socket
      |> assign(
-       communities: Communities.list_communities(socket.assigns.current_scope),
+       communities: communities,
        current_community: nil,
        channels: [],
        current_channel: nil,
@@ -549,10 +567,12 @@ defmodule RChatWeb.ChatLive do
        active_invites: [],
        created_invite: nil,
        form: nil,
-       subscribed_channel: nil,
        last_message: nil,
        first_message: nil,
+       first_unread_id: nil,
        history_end: true,
+       unread_channels: MapSet.new(),
+       unread_communities: Chat.unread_community_ids(scope),
        presence_community: nil,
        online: MapSet.new()
      )
@@ -607,6 +627,15 @@ defmodule RChatWeb.ChatLive do
 
     {items, last_message} = group_messages(messages)
 
+    first_unread_id = current_channel && Chat.first_unread_id(scope, current_channel)
+
+    if current_channel && connected?(socket) do
+      Chat.mark_channel_read(scope, current_channel)
+    end
+
+    unread_channels =
+      scope |> Chat.unread_channel_ids(community) |> maybe_delete(current_channel)
+
     socket
     |> assign(
       page_title: if(current_channel, do: "##{current_channel.name}", else: community.name),
@@ -618,9 +647,11 @@ defmodule RChatWeb.ChatLive do
       can_invite: Communities.permitted?(scope, community, :create_invites),
       last_message: last_message,
       first_message: List.first(messages),
-      history_end: length(messages) < @page_size
+      first_unread_id: first_unread_id,
+      history_end: length(messages) < @page_size,
+      unread_channels: unread_channels,
+      unread_communities: Chat.unread_community_ids(scope)
     )
-    |> maybe_subscribe(current_channel)
     |> maybe_track_presence(community)
     |> stream(:messages, items, reset: true)
   end
@@ -678,6 +709,8 @@ defmodule RChatWeb.ChatLive do
   def handle_event("create_community", %{"community" => attrs}, socket) do
     case Communities.create_community(socket.assigns.current_scope, attrs) do
       {:ok, community} ->
+        if connected?(socket), do: Chat.subscribe_community(community)
+
         {:noreply,
          socket
          |> assign(communities: Communities.list_communities(socket.assigns.current_scope))
@@ -779,6 +812,14 @@ defmodule RChatWeb.ChatLive do
     end
   end
 
+  def handle_event("mark_read", _params, socket) do
+    if channel = socket.assigns.current_channel do
+      Chat.mark_channel_read(socket.assigns.current_scope, channel)
+    end
+
+    {:noreply, socket}
+  end
+
   def handle_event("channel_nav", %{"dir" => dir}, socket) do
     %{channels: channels, current_channel: current, current_community: community} =
       socket.assigns
@@ -820,15 +861,51 @@ defmodule RChatWeb.ChatLive do
   end
 
   def handle_info({:message_created, message}, socket) do
-    %{current_channel: current_channel, last_message: last_message} = socket.assigns
+    %{
+      current_channel: current_channel,
+      current_community: current_community,
+      last_message: last_message
+    } = socket.assigns
 
-    if current_channel && message.channel_id == current_channel.id do
-      {:noreply,
-       socket
-       |> stream_insert(:messages, message_item(message, last_message))
-       |> assign(last_message: message)}
+    cond do
+      current_channel && message.channel_id == current_channel.id ->
+        Chat.mark_channel_read(socket.assigns.current_scope, current_channel)
+
+        {:noreply,
+         socket
+         |> stream_insert(:messages, message_item(message, last_message))
+         |> assign(last_message: message)}
+
+      current_community && message.channel.community_id == current_community.id ->
+        {:noreply, update(socket, :unread_channels, &MapSet.put(&1, message.channel_id))}
+
+      true ->
+        {:noreply,
+         update(socket, :unread_communities, &MapSet.put(&1, message.channel.community_id))}
+    end
+  end
+
+  defp maybe_delete(set, nil), do: set
+  defp maybe_delete(set, %Channel{id: id}), do: MapSet.delete(set, id)
+
+  defp rail_unread?(community, current_community, unread_channels, unread_communities) do
+    if current_community && current_community.id == community.id do
+      MapSet.size(unread_channels) > 0
     else
-      {:noreply, socket}
+      community.id in unread_communities
+    end
+  end
+
+  defp channel_class(channel, current_channel, unread_channels) do
+    cond do
+      current_channel && current_channel.id == channel.id ->
+        "bg-base-300 text-base-content"
+
+      channel.id in unread_channels ->
+        "text-base-content font-semibold hover:bg-base-300/50"
+
+      true ->
+        "text-muted hover:bg-base-300/50 hover:text-base-content"
     end
   end
 
@@ -861,23 +938,6 @@ defmodule RChatWeb.ChatLive do
         online = topic |> RChatWeb.Presence.list() |> Map.keys() |> MapSet.new()
 
         assign(socket, presence_community: community, online: online)
-    end
-  end
-
-  defp maybe_subscribe(socket, channel) do
-    previous = socket.assigns.subscribed_channel
-
-    cond do
-      not connected?(socket) ->
-        socket
-
-      previous && channel && previous.id == channel.id ->
-        socket
-
-      true ->
-        if previous, do: Chat.unsubscribe_channel(previous)
-        if channel, do: Chat.subscribe_channel(channel)
-        assign(socket, subscribed_channel: channel)
     end
   end
 
