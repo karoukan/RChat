@@ -40,7 +40,10 @@ defmodule RChatWeb.ChatLive do
         </.link>
       </nav>
 
-      <aside class="w-60 shrink-0 bg-base-200 border-r border-subtle flex flex-col">
+      <aside
+        id="sidebar"
+        class="w-60 shrink-0 bg-base-200 border-r border-subtle flex flex-col max-md:hidden max-md:absolute max-md:inset-y-0 max-md:left-16 max-md:z-20"
+      >
         <div class="h-12 shrink-0 border-b border-subtle px-4 flex items-center font-semibold">
           <span class="truncate">
             {if @current_community, do: @current_community.name, else: "RChat"}
@@ -227,6 +230,14 @@ defmodule RChatWeb.ChatLive do
             </script>
           <% @current_channel -> %>
             <div class="h-12 shrink-0 border-b border-subtle px-4 flex items-center gap-2 min-w-0">
+              <button
+                type="button"
+                class="md:hidden text-muted hover:text-base-content"
+                phx-click={JS.toggle_class("max-md:hidden", to: "#sidebar")}
+              >
+                <.icon name="hero-bars-3" class="size-5" />
+                <span class="sr-only">Toggle channels</span>
+              </button>
               <span class="font-semibold">
                 <span class="opacity-60">#</span>{@current_channel.name}
               </span>
@@ -529,16 +540,24 @@ defmodule RChatWeb.ChatLive do
         <div class="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
           <div
             :for={member <- @members}
-            class="flex items-center gap-2 px-2 py-1 text-sm text-muted"
+            class="flex items-center gap-2 px-2 py-1 text-sm"
           >
-            <span class={[
-              "size-2 rounded-full",
-              if(MapSet.member?(@online, to_string(member.user_id)),
-                do: "bg-success",
-                else: "bg-base-content/20"
-              )
-            ]}></span>
-            <span class="truncate">{member.nickname || member.user.username}</span>
+            <div class="relative shrink-0">
+              <div class={[
+                "size-7 rounded-full flex items-center justify-center text-xs font-semibold",
+                avatar_color(member.user)
+              ]}>
+                {avatar_initial(member.user)}
+              </div>
+              <span class={[
+                "absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-base-200",
+                if(MapSet.member?(@online, to_string(member.user_id)),
+                  do: "bg-success",
+                  else: "bg-base-content/20"
+                )
+              ]}></span>
+            </div>
+            <span class="truncate text-muted">{member.nickname || member.user.username}</span>
           </div>
         </div>
       </aside>
