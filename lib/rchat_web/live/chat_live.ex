@@ -5,17 +5,19 @@ defmodule RChatWeb.ChatLive do
   alias RChat.Communities
   alias RChat.Communities.{Channel, Community}
 
+  @page_size 50
+
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex h-screen bg-base-100 text-base-content">
+    <div id="chat-root" phx-hook=".ChannelNav" class="flex h-screen bg-base-100 text-base-content">
       <nav class="w-16 shrink-0 bg-base-300 flex flex-col items-center gap-2 py-3 overflow-y-auto">
         <.link
           :for={community <- @communities}
           patch={~p"/c/#{community.slug}"}
           title={community.name}
           class={[
-            "flex size-11 shrink-0 items-center justify-center rounded-xl text-sm font-semibold transition-colors",
+            "relative flex size-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-colors",
             if(@current_community && @current_community.id == community.id,
               do: "bg-primary text-primary-content",
               else: "bg-base-100 text-muted hover:text-base-content"
@@ -23,18 +25,25 @@ defmodule RChatWeb.ChatLive do
           ]}
         >
           {initials(community.name)}
+          <span
+            :if={rail_unread?(community, @current_community, @unread_channels, @unread_communities)}
+            class="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-base-content"
+          ></span>
         </.link>
         <.link
           patch={~p"/communities/new"}
           title="New community"
-          class="flex size-11 shrink-0 items-center justify-center rounded-xl bg-base-100 text-muted hover:text-primary"
+          class="flex size-11 shrink-0 items-center justify-center rounded-full bg-base-100 text-muted hover:text-primary"
         >
           <.icon name="hero-plus" class="size-5" />
           <span class="sr-only">New community</span>
         </.link>
       </nav>
 
-      <aside class="w-60 shrink-0 bg-base-200 border-r border-subtle flex flex-col">
+      <aside
+        id="sidebar"
+        class="w-60 shrink-0 bg-base-200 border-r border-subtle flex flex-col max-md:hidden max-md:absolute max-md:inset-y-0 max-md:left-16 max-md:z-20"
+      >
         <div class="h-12 shrink-0 border-b border-subtle px-4 flex items-center font-semibold">
           <span class="truncate">
             {if @current_community, do: @current_community.name, else: "RChat"}
@@ -47,10 +56,7 @@ defmodule RChatWeb.ChatLive do
               patch={~p"/c/#{@current_community.slug}/#{channel.id}"}
               class={[
                 "flex items-center gap-1.5 rounded px-2 py-1 text-sm",
-                if(@current_channel && @current_channel.id == channel.id,
-                  do: "bg-base-300 text-base-content",
-                  else: "text-muted hover:bg-base-300/50 hover:text-base-content"
-                )
+                channel_class(channel, @current_channel, @unread_channels)
               ]}
             >
               <span class="opacity-60">#</span>{channel.name}
@@ -224,6 +230,14 @@ defmodule RChatWeb.ChatLive do
             </script>
           <% @current_channel -> %>
             <div class="h-12 shrink-0 border-b border-subtle px-4 flex items-center gap-2 min-w-0">
+              <button
+                type="button"
+                class="md:hidden text-muted hover:text-base-content"
+                phx-click={JS.toggle_class("max-md:hidden", to: "#sidebar")}
+              >
+                <.icon name="hero-bars-3" class="size-5" />
+                <span class="sr-only">Toggle channels</span>
+              </button>
               <span class="font-semibold">
                 <span class="opacity-60">#</span>{@current_channel.name}
               </span>
@@ -238,83 +252,268 @@ defmodule RChatWeb.ChatLive do
                 {MapSet.size(@online)} online
               </span>
             </div>
-            <div
-              id="messages-scroll"
-              phx-hook=".AutoScroll"
-              class="flex-1 overflow-y-auto px-4 py-4 flex flex-col"
-            >
-              <div id="messages" phx-update="stream" class="mt-auto">
-                <div id="messages-empty" class="hidden only:block pt-2 text-sm text-muted">
-                  This is the beginning of <span class="font-medium">#{@current_channel.name}</span>.
-                </div>
+            <div class="relative flex-1 min-h-0 flex flex-col">
+              <div
+                id="messages-scroll"
+                phx-hook=".ScrollManager"
+                data-channel-id={@current_channel.id}
+                data-first-unread={@first_unread_id && "messages-#{@first_unread_id}"}
+                class="flex-1 overflow-y-auto px-4 py-4 flex flex-col"
+              >
                 <div
-                  :for={{dom_id, item} <- @streams.messages}
-                  id={dom_id}
-                  class={["group", if(item.compact, do: "mt-0.5", else: "mt-4 first:mt-0")]}
+                  id="messages"
+                  phx-update="stream"
+                  phx-viewport-top={!@history_end && "load_older"}
+                  class="mt-auto"
                 >
-                  <div :if={item.divider} class="flex items-center gap-3 mb-4 text-[11px] text-muted">
-                    <span class="h-px flex-1 bg-subtle"></span>
-                    {Calendar.strftime(item.divider, "%d/%m/%Y")}
-                    <span class="h-px flex-1 bg-subtle"></span>
+                  <div id="messages-empty" class="hidden only:block pt-2 text-sm text-muted">
+                    This is the beginning of <span class="font-medium">#{@current_channel.name}</span>.
                   </div>
-                  <div :if={item.compact} class="flex gap-3">
-                    <div class="w-9 shrink-0 text-right text-[10px] leading-6 text-muted opacity-0 group-hover:opacity-100">
-                      {format_time(item.message.inserted_at)}
+                  <div
+                    :for={{dom_id, item} <- @streams.messages}
+                    id={dom_id}
+                    class={["group", if(item.compact, do: "mt-0.5", else: "mt-4 first:mt-0")]}
+                  >
+                    <div
+                      :if={item.divider}
+                      class="flex items-center gap-3 mb-4 text-[11px] text-muted"
+                    >
+                      <span class="h-px flex-1 bg-subtle"></span>
+                      <time
+                        id={"divider-#{dom_id}"}
+                        phx-hook=".LocalTime"
+                        data-kind="date"
+                        data-ts={Date.to_iso8601(item.divider)}
+                      >
+                        {Calendar.strftime(item.divider, "%d/%m/%Y")}
+                      </time>
+                      <span class="h-px flex-1 bg-subtle"></span>
                     </div>
-                    <p
-                      class="flex-1 min-w-0 text-sm whitespace-pre-wrap break-words"
-                      phx-no-format
-                    >{item.message.content}</p>
-                  </div>
-                  <div :if={!item.compact} class="flex gap-3">
-                    <div class={[
-                      "size-9 shrink-0 rounded-full flex items-center justify-center text-sm font-semibold",
-                      avatar_color(item.message.author)
-                    ]}>
-                      {avatar_initial(item.message.author)}
-                    </div>
-                    <div class="flex-1 min-w-0">
-                      <div class="flex items-baseline gap-2">
-                        <span class="text-sm font-semibold">{author_name(item.message.author)}</span>
-                        <span class="text-[11px] text-muted">
+                    <div :if={item.compact} class="flex gap-3">
+                      <div class="w-9 shrink-0 text-right text-[10px] leading-6 text-muted opacity-0 group-hover:opacity-100">
+                        <time
+                          id={"time-#{dom_id}"}
+                          phx-hook=".LocalTime"
+                          data-ts={DateTime.to_iso8601(item.message.inserted_at)}
+                        >
                           {format_time(item.message.inserted_at)}
-                        </span>
+                        </time>
                       </div>
-                      <p class="text-sm whitespace-pre-wrap break-words" phx-no-format>{item.message.content}</p>
+                      <p
+                        class="flex-1 min-w-0 text-sm whitespace-pre-wrap break-words"
+                        phx-no-format
+                      >{item.message.content}</p>
+                    </div>
+                    <div :if={!item.compact} class="flex gap-3">
+                      <div class={[
+                        "size-9 shrink-0 rounded-full flex items-center justify-center text-sm font-semibold",
+                        avatar_color(item.message.author)
+                      ]}>
+                        {avatar_initial(item.message.author)}
+                      </div>
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-baseline gap-2">
+                          <span class="text-sm font-semibold">{author_name(item.message.author)}</span>
+                          <time
+                            id={"time-#{dom_id}"}
+                            phx-hook=".LocalTime"
+                            class="text-[11px] text-muted"
+                            data-ts={DateTime.to_iso8601(item.message.inserted_at)}
+                          >
+                            {format_time(item.message.inserted_at)}
+                          </time>
+                        </div>
+                        <p class="text-sm whitespace-pre-wrap break-words" phx-no-format>{item.message.content}</p>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
+              <button
+                id="new-messages-pill"
+                type="button"
+                class="hidden absolute bottom-3 left-1/2 -translate-x-1/2 btn btn-primary btn-xs rounded-full"
+              ></button>
             </div>
-            <form id="composer" phx-submit="send_message" phx-hook=".Composer" class="shrink-0 p-3">
-              <input
-                type="text"
+            <form
+              id="composer"
+              phx-submit="send_message"
+              phx-hook=".Composer"
+              class="shrink-0 p-3 flex items-end gap-2"
+            >
+              <textarea
                 name="content"
-                class="input w-full"
+                rows="1"
+                class="textarea w-full resize-none leading-5"
                 placeholder={"Message ##{@current_channel.name}"}
                 autocomplete="off"
                 maxlength="4000"
                 required
-              />
+              ></textarea>
+              <button type="submit" class="btn btn-primary hidden pointer-coarse:inline-flex">
+                <.icon name="hero-paper-airplane" class="size-5" />
+                <span class="sr-only">Send</span>
+              </button>
             </form>
-            <script :type={Phoenix.LiveView.ColocatedHook} name=".AutoScroll">
+            <script :type={Phoenix.LiveView.ColocatedHook} name=".ScrollManager">
               export default {
-                mounted() { this.scroll() },
-                beforeUpdate() {
-                  this.follow =
-                    this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight < 120
+                mounted() {
+                  this.pill = document.getElementById("new-messages-pill")
+                  this.channelId = this.el.dataset.channelId
+                  this.count = 0
+                  this.lastChildren = this.childCount()
+                  this.el.addEventListener("scroll", () => {
+                    if (this.nearBottom()) this.hidePill()
+                  })
+                  this.pill.addEventListener("click", () => {
+                    this.scrollBottom()
+                    this.hidePill()
+                  })
+                  this.scrollToTarget()
                 },
-                updated() { if (this.follow) this.scroll() },
-                scroll() { this.el.scrollTop = this.el.scrollHeight }
+                beforeUpdate() {
+                  this.follow = this.nearBottom()
+                  this.prevHeight = this.el.scrollHeight
+                  this.prevFirstId = this.firstMessageId()
+                },
+                updated() {
+                  if (this.channelId !== this.el.dataset.channelId) {
+                    this.channelId = this.el.dataset.channelId
+                    this.lastChildren = this.childCount()
+                    this.hidePill()
+                    this.scrollToTarget()
+                    return
+                  }
+                  const children = this.childCount()
+                  const added = Math.max(0, children - this.lastChildren)
+                  this.lastChildren = children
+                  const prepended =
+                    this.prevFirstId && this.firstMessageId() !== this.prevFirstId && added > 0
+                  if (prepended && !this.follow) {
+                    this.el.scrollTop += this.el.scrollHeight - this.prevHeight
+                  } else if (this.follow) {
+                    this.scrollBottom()
+                  } else if (added > 0) {
+                    this.count += added
+                    this.pill.textContent =
+                      this.count === 1 ? "1 new message" : `${this.count} new messages`
+                    this.pill.classList.remove("hidden")
+                  }
+                },
+                firstMessageId() {
+                  const items = document.getElementById("messages").children
+                  for (const el of items) {
+                    if (/^messages-\d+$/.test(el.id)) return el.id
+                  }
+                  return null
+                },
+                childCount() { return document.getElementById("messages").childElementCount },
+                nearBottom() {
+                  return this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight < 120
+                },
+                scrollBottom() { this.el.scrollTop = this.el.scrollHeight },
+                scrollToTarget() {
+                  const targetId = this.el.dataset.firstUnread
+                  const target = targetId && document.getElementById(targetId)
+                  if (target) {
+                    target.scrollIntoView({block: "center"})
+                  } else {
+                    this.scrollBottom()
+                  }
+                },
+                hidePill() { this.count = 0; this.pill.classList.add("hidden") }
               }
             </script>
             <script :type={Phoenix.LiveView.ColocatedHook} name=".Composer">
               export default {
                 mounted() {
+                  this.textarea = this.el.querySelector("textarea")
+                  this.coarse = window.matchMedia("(pointer: coarse)").matches
+
                   this.el.addEventListener("submit", () => {
-                    requestAnimationFrame(() => this.el.reset())
+                    requestAnimationFrame(() => {
+                      this.el.reset()
+                      this.autogrow()
+                      this.textarea.focus()
+                    })
                   })
+
+                  this.textarea.addEventListener("keydown", e => {
+                    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !this.coarse) {
+                      e.preventDefault()
+                      if (this.textarea.value.trim() !== "") {
+                        this.el.dispatchEvent(new Event("submit", {bubbles: true, cancelable: true}))
+                      }
+                    }
+                  })
+                  this.textarea.addEventListener("input", () => this.autogrow())
+
+                  this.refocus = e => {
+                    if (e.metaKey || e.ctrlKey || e.altKey || e.key.length !== 1) return
+                    const t = e.target
+                    if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return
+                    this.textarea.focus()
+                  }
+                  window.addEventListener("keydown", this.refocus)
+
+                  this.textarea.focus()
+                  this.autogrow()
+                },
+                updated() {
+                  if (document.activeElement === document.body) this.textarea.focus()
+                },
+                destroyed() {
+                  window.removeEventListener("keydown", this.refocus)
+                },
+                autogrow() {
+                  const ta = this.textarea
+                  ta.style.height = "auto"
+                  const line = parseFloat(getComputedStyle(ta).lineHeight) || 20
+                  const max = line * 8 + 16
+                  ta.style.height = Math.min(ta.scrollHeight, max) + "px"
+                  ta.style.overflowY = ta.scrollHeight > max ? "auto" : "hidden"
                 }
+              }
+            </script>
+            <script :type={Phoenix.LiveView.ColocatedHook} name=".LocalTime">
+              export default {
+                mounted() { this.format() },
+                updated() { this.format() },
+                format() {
+                  const ts = this.el.dataset.ts
+                  if (this.el.dataset.kind === "date") {
+                    const [y, m, d] = ts.split("-").map(Number)
+                    const date = new Date(y, m - 1, d)
+                    const today = new Date()
+                    today.setHours(0, 0, 0, 0)
+                    const diff = Math.round((date - today) / 86400000)
+                    if (diff === 0 || diff === -1) {
+                      const label = new Intl.RelativeTimeFormat([], {numeric: "auto"}).format(diff, "day")
+                      this.el.textContent = label.charAt(0).toUpperCase() + label.slice(1)
+                    } else {
+                      this.el.textContent = new Intl.DateTimeFormat([], {dateStyle: "long"}).format(date)
+                    }
+                  } else {
+                    this.el.textContent =
+                      new Intl.DateTimeFormat([], {timeStyle: "short"}).format(new Date(ts))
+                  }
+                }
+              }
+            </script>
+            <script :type={Phoenix.LiveView.ColocatedHook} name=".ChannelNav">
+              export default {
+                mounted() {
+                  this.onKey = e => {
+                    if (e.altKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+                      e.preventDefault()
+                      this.pushEvent("channel_nav", {dir: e.key === "ArrowUp" ? "prev" : "next"})
+                    } else if (e.key === "Escape" && !e.altKey && !e.ctrlKey && !e.metaKey) {
+                      this.pushEvent("mark_read", {})
+                    }
+                  }
+                  window.addEventListener("keydown", this.onKey)
+                },
+                destroyed() { window.removeEventListener("keydown", this.onKey) }
               }
             </script>
           <% true -> %>
@@ -341,16 +540,24 @@ defmodule RChatWeb.ChatLive do
         <div class="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
           <div
             :for={member <- @members}
-            class="flex items-center gap-2 px-2 py-1 text-sm text-muted"
+            class="flex items-center gap-2 px-2 py-1 text-sm"
           >
-            <span class={[
-              "size-2 rounded-full",
-              if(MapSet.member?(@online, to_string(member.user_id)),
-                do: "bg-success",
-                else: "bg-base-content/20"
-              )
-            ]}></span>
-            <span class="truncate">{member.nickname || member.user.username}</span>
+            <div class="relative shrink-0">
+              <div class={[
+                "size-7 rounded-full flex items-center justify-center text-xs font-semibold",
+                avatar_color(member.user)
+              ]}>
+                {avatar_initial(member.user)}
+              </div>
+              <span class={[
+                "absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-base-200",
+                if(MapSet.member?(@online, to_string(member.user_id)),
+                  do: "bg-success",
+                  else: "bg-base-content/20"
+                )
+              ]}></span>
+            </div>
+            <span class="truncate text-muted">{member.nickname || member.user.username}</span>
           </div>
         </div>
       </aside>
@@ -361,10 +568,15 @@ defmodule RChatWeb.ChatLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    scope = socket.assigns.current_scope
+    communities = Communities.list_communities(scope)
+
+    if connected?(socket), do: Enum.each(communities, &Chat.subscribe_community/1)
+
     {:ok,
      socket
      |> assign(
-       communities: Communities.list_communities(socket.assigns.current_scope),
+       communities: communities,
        current_community: nil,
        channels: [],
        current_channel: nil,
@@ -374,8 +586,12 @@ defmodule RChatWeb.ChatLive do
        active_invites: [],
        created_invite: nil,
        form: nil,
-       subscribed_channel: nil,
        last_message: nil,
+       first_message: nil,
+       first_unread_id: nil,
+       history_end: true,
+       unread_channels: MapSet.new(),
+       unread_communities: Chat.unread_community_ids(scope),
        presence_community: nil,
        online: MapSet.new()
      )
@@ -425,8 +641,19 @@ defmodule RChatWeb.ChatLive do
         id -> Communities.get_channel!(community, id)
       end
 
-    messages = if current_channel, do: Chat.list_messages(current_channel), else: []
+    messages =
+      if current_channel, do: Chat.list_messages(current_channel, limit: @page_size), else: []
+
     {items, last_message} = group_messages(messages)
+
+    first_unread_id = current_channel && Chat.first_unread_id(scope, current_channel)
+
+    if current_channel && connected?(socket) do
+      Chat.mark_channel_read(scope, current_channel)
+    end
+
+    unread_channels =
+      scope |> Chat.unread_channel_ids(community) |> maybe_delete(current_channel)
 
     socket
     |> assign(
@@ -437,9 +664,13 @@ defmodule RChatWeb.ChatLive do
       members: Communities.list_members(community),
       can_manage_channels: Communities.permitted?(scope, community, :manage_channels),
       can_invite: Communities.permitted?(scope, community, :create_invites),
-      last_message: last_message
+      last_message: last_message,
+      first_message: List.first(messages),
+      first_unread_id: first_unread_id,
+      history_end: length(messages) < @page_size,
+      unread_channels: unread_channels,
+      unread_communities: Chat.unread_community_ids(scope)
     )
-    |> maybe_subscribe(current_channel)
     |> maybe_track_presence(community)
     |> stream(:messages, items, reset: true)
   end
@@ -497,6 +728,8 @@ defmodule RChatWeb.ChatLive do
   def handle_event("create_community", %{"community" => attrs}, socket) do
     case Communities.create_community(socket.assigns.current_scope, attrs) do
       {:ok, community} ->
+        if connected?(socket), do: Chat.subscribe_community(community)
+
         {:noreply,
          socket
          |> assign(communities: Communities.list_communities(socket.assigns.current_scope))
@@ -551,15 +784,80 @@ defmodule RChatWeb.ChatLive do
     %{current_scope: scope, current_community: community, current_channel: channel} =
       socket.assigns
 
-    case Chat.create_message(scope, community, channel, %{content: content}) do
-      {:ok, _message} ->
+    case String.trim(content) do
+      "" ->
         {:noreply, socket}
 
-      {:error, :unauthorized} ->
-        {:noreply, put_flash(socket, :error, "You are not allowed to send messages here.")}
+      content ->
+        case Chat.create_message(scope, community, channel, %{content: content}) do
+          {:ok, _message} ->
+            {:noreply, socket}
 
-      {:error, %Ecto.Changeset{}} ->
-        {:noreply, socket}
+          {:error, :unauthorized} ->
+            {:noreply, put_flash(socket, :error, "You are not allowed to send messages here.")}
+
+          {:error, %Ecto.Changeset{}} ->
+            {:noreply, socket}
+        end
+    end
+  end
+
+  def handle_event("load_older", _params, socket) do
+    %{current_channel: channel, first_message: first, history_end: history_end} = socket.assigns
+
+    if channel && first && !history_end do
+      older = Chat.list_messages(channel, before: first.id, limit: @page_size)
+      {items, last_of_batch} = group_messages(older)
+
+      socket =
+        items
+        |> Enum.reverse()
+        |> Enum.reduce(socket, fn item, acc -> stream_insert(acc, :messages, item, at: 0) end)
+
+      socket =
+        if last_of_batch do
+          stream_insert(socket, :messages, message_item(first, last_of_batch), at: length(items))
+        else
+          socket
+        end
+
+      {:noreply,
+       assign(socket,
+         first_message: List.first(older) || first,
+         history_end: length(older) < @page_size
+       )}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("mark_read", _params, socket) do
+    if channel = socket.assigns.current_channel do
+      Chat.mark_channel_read(socket.assigns.current_scope, channel)
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("channel_nav", %{"dir" => dir}, socket) do
+    %{channels: channels, current_channel: current, current_community: community} =
+      socket.assigns
+
+    if community && channels != [] do
+      count = length(channels)
+      index = current && Enum.find_index(channels, &(&1.id == current.id))
+
+      next_index =
+        case {index, dir} do
+          {nil, _} -> 0
+          {i, "next"} -> rem(i + 1, count)
+          {i, _} -> rem(i - 1 + count, count)
+        end
+
+      channel = Enum.at(channels, next_index)
+      {:noreply, push_patch(socket, to: ~p"/c/#{community.slug}/#{channel.id}")}
+    else
+      {:noreply, socket}
     end
   end
 
@@ -582,15 +880,51 @@ defmodule RChatWeb.ChatLive do
   end
 
   def handle_info({:message_created, message}, socket) do
-    %{current_channel: current_channel, last_message: last_message} = socket.assigns
+    %{
+      current_channel: current_channel,
+      current_community: current_community,
+      last_message: last_message
+    } = socket.assigns
 
-    if current_channel && message.channel_id == current_channel.id do
-      {:noreply,
-       socket
-       |> stream_insert(:messages, message_item(message, last_message))
-       |> assign(last_message: message)}
+    cond do
+      current_channel && message.channel_id == current_channel.id ->
+        Chat.mark_channel_read(socket.assigns.current_scope, current_channel)
+
+        {:noreply,
+         socket
+         |> stream_insert(:messages, message_item(message, last_message))
+         |> assign(last_message: message)}
+
+      current_community && message.channel.community_id == current_community.id ->
+        {:noreply, update(socket, :unread_channels, &MapSet.put(&1, message.channel_id))}
+
+      true ->
+        {:noreply,
+         update(socket, :unread_communities, &MapSet.put(&1, message.channel.community_id))}
+    end
+  end
+
+  defp maybe_delete(set, nil), do: set
+  defp maybe_delete(set, %Channel{id: id}), do: MapSet.delete(set, id)
+
+  defp rail_unread?(community, current_community, unread_channels, unread_communities) do
+    if current_community && current_community.id == community.id do
+      MapSet.size(unread_channels) > 0
     else
-      {:noreply, socket}
+      community.id in unread_communities
+    end
+  end
+
+  defp channel_class(channel, current_channel, unread_channels) do
+    cond do
+      current_channel && current_channel.id == channel.id ->
+        "bg-base-300 text-base-content"
+
+      channel.id in unread_channels ->
+        "text-base-content font-semibold hover:bg-base-300/50"
+
+      true ->
+        "text-muted hover:bg-base-300/50 hover:text-base-content"
     end
   end
 
@@ -623,23 +957,6 @@ defmodule RChatWeb.ChatLive do
         online = topic |> RChatWeb.Presence.list() |> Map.keys() |> MapSet.new()
 
         assign(socket, presence_community: community, online: online)
-    end
-  end
-
-  defp maybe_subscribe(socket, channel) do
-    previous = socket.assigns.subscribed_channel
-
-    cond do
-      not connected?(socket) ->
-        socket
-
-      previous && channel && previous.id == channel.id ->
-        socket
-
-      true ->
-        if previous, do: Chat.unsubscribe_channel(previous)
-        if channel, do: Chat.subscribe_channel(channel)
-        assign(socket, subscribed_channel: channel)
     end
   end
 

@@ -31,16 +31,17 @@ defmodule RChat.ChatTest do
       assert Repo.get!(Message, message.id)
     end
 
-    test "broadcasts to channel subscribers", %{
+    test "broadcasts to community subscribers", %{
       scope: scope,
       community: community,
       channel: channel
     } do
-      Chat.subscribe_channel(channel)
+      Chat.subscribe_community(community)
 
       {:ok, message} = Chat.create_message(scope, community, channel, %{content: "hello"})
 
       assert_receive {:message_created, ^message}
+      assert message.channel.id == channel.id
     end
 
     test "validates the content", %{scope: scope, community: community, channel: channel} do
@@ -69,6 +70,48 @@ defmodule RChat.ChatTest do
       assert_raise MatchError, fn ->
         Chat.create_message(scope, community, other_channel, %{content: "hello"})
       end
+    end
+  end
+
+  describe "read states" do
+    test "mark_channel_read/2 and first_unread_id/2", %{
+      scope: scope,
+      community: community,
+      channel: channel
+    } do
+      reader = user_scope_fixture()
+      join_community(reader.user, community)
+
+      first = message_fixture(scope, community, channel)
+      assert Chat.first_unread_id(reader, channel) == first.id
+
+      Chat.mark_channel_read(reader, channel)
+      assert Chat.first_unread_id(reader, channel) == nil
+
+      second = message_fixture(scope, community, channel)
+      assert Chat.first_unread_id(reader, channel) == second.id
+    end
+
+    test "unread_channel_ids/2 and unread_community_ids/1", %{
+      scope: scope,
+      community: community,
+      channel: channel
+    } do
+      reader = user_scope_fixture()
+      join_community(reader.user, community)
+
+      assert Chat.unread_channel_ids(reader, community) == MapSet.new()
+      assert Chat.unread_community_ids(reader) == MapSet.new()
+
+      message_fixture(scope, community, channel)
+
+      assert Chat.unread_channel_ids(reader, community) == MapSet.new([channel.id])
+      assert Chat.unread_community_ids(reader) == MapSet.new([community.id])
+
+      Chat.mark_channel_read(reader, channel)
+
+      assert Chat.unread_channel_ids(reader, community) == MapSet.new()
+      assert Chat.unread_community_ids(reader) == MapSet.new()
     end
   end
 
@@ -105,6 +148,23 @@ defmodule RChat.ChatTest do
       assert [%{id: id1}, %{id: id2}] = Chat.list_messages(channel, limit: 2)
       assert id1 == second.id
       assert id2 == third.id
+    end
+
+    test "paginates upward with :before", %{
+      scope: scope,
+      community: community,
+      channel: channel
+    } do
+      first = message_fixture(scope, community, channel)
+      second = message_fixture(scope, community, channel)
+      third = message_fixture(scope, community, channel)
+
+      assert [%{id: id1}, %{id: id2}] = Chat.list_messages(channel, before: third.id, limit: 2)
+      assert id1 == first.id
+      assert id2 == second.id
+
+      assert [%{id: ^id1}] = Chat.list_messages(channel, before: second.id, limit: 2)
+      assert Chat.list_messages(channel, before: first.id, limit: 2) == []
     end
 
     test "excludes soft deleted messages", %{
