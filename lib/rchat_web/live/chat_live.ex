@@ -27,7 +27,7 @@ defmodule RChatWeb.ChatLive do
           {initials(community.name)}
           <span
             :if={rail_unread?(community, @current_community, @unread_channels, @unread_communities)}
-            class="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-base-content"
+            class="absolute -left-2.5 top-1/2 -translate-y-1/2 h-3 w-1 rounded-r-full bg-base-content"
           ></span>
         </.link>
         <.link
@@ -553,7 +553,7 @@ defmodule RChatWeb.ChatLive do
                 "absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-base-200",
                 if(MapSet.member?(@online, to_string(member.user_id)),
                   do: "bg-success",
-                  else: "bg-base-content/20"
+                  else: "bg-base-300"
                 )
               ]}></span>
             </div>
