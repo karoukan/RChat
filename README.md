@@ -60,4 +60,4 @@ mix test
 
 ## Licence
 
-À définir.
+[AGPL-3.0](LICENSE)
